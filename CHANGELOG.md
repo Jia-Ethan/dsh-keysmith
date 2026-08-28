@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--status` reports the live adapter patch state.
 - Bilingual messages for all adapter-related transitions, plus a restart
   hint (running dsh processes must restart to load the patched module).
+- `--json` machine-readable contract (`dsh-keysmith/v1`) for deploy,
+  `--status`, `--uninstall`, and `--recover`. JSON payloads are
+  language-neutral. Argument errors also emit JSON when `--json` is set.
 
 ### Changed
 
