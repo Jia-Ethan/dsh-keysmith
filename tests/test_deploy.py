@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import json
 
-from conftest import run_cli
+from conftest import (
+    ADAPTER_REL,
+    adapter_original_body,
+    adapter_patched_body,
+    run_cli,
+    write_adapter,
+)
 
 MANIFEST = ".dsh-keysmith-manifest.json"
 
@@ -23,11 +29,13 @@ def test_deploy_creates_files_and_manifest(dsh_home):
 
     data = json.loads(manifest.read_text(encoding="utf-8"))
     assert data["schema_version"] == 1
-    assert data["tool_version"] == "0.1.0"
+    assert data["tool_version"] == "0.2.0"
     assert data["agents_md"]["before"] is None
     assert data["agents_md"]["backup"] is None
     assert data["agents_md"]["after"]["sha256"]
     assert data["cordis_patch"]["before"] is None
+    # No adapter under a bare home: the manifest must not claim one.
+    assert ADAPTER_REL not in data
     assert set(data.keys()) == {
         "schema_version",
         "tool_version",
@@ -115,3 +123,77 @@ def test_uninstall_drift_refused(dsh_home):
     result = run_cli(["--dsh-dir", str(dsh_home), "--uninstall", "--yes", "--lang", "en"])
     assert result.returncode == 1
     assert (dsh_home / "AGENTS.md").read_text(encoding="utf-8") == "tampered\n"
+
+
+# ── Adapter hot-fix tests ──────────────────────────────────────────────────────
+
+
+def test_deploy_patches_adapter_pristine(dsh_home):
+    """A pristine adapter is patched; a backup is created."""
+    write_adapter(dsh_home, adapter_original_body())
+    assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
+    adapter = dsh_home / ADAPTER_REL
+    text = adapter.read_text(encoding="utf-8")
+    assert "if (call.id) block.callId" in text
+    assert "if (call.function?.name) block.name" in text
+    assert "!== void 0" not in text
+    backups = sorted(dsh_home.glob("adapter-index.js.bak_*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == adapter_original_body()
+    manifest = json.loads((dsh_home / MANIFEST).read_text(encoding="utf-8"))
+    assert manifest["adapter_patch"]["already_patched"] is False
+    assert manifest["adapter_patch"]["backup"].startswith("adapter-index.js.bak_")
+
+
+def test_deploy_adapter_idempotent_when_already_patched(dsh_home):
+    """An already-patched adapter records a manifest entry but writes nothing."""
+    write_adapter(dsh_home, adapter_patched_body())
+    assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
+    adapter = dsh_home / ADAPTER_REL
+    # File content unchanged.
+    assert adapter.read_text(encoding="utf-8") == adapter_patched_body()
+    # No backup created.
+    assert list(dsh_home.glob("adapter-index.js.bak_*")) == []
+    manifest = json.loads((dsh_home / MANIFEST).read_text(encoding="utf-8"))
+    assert manifest["adapter_patch"]["already_patched"] is True
+    assert manifest["adapter_patch"]["backup"] is None
+
+
+def test_deploy_adapter_unknown_source_skips(dsh_home):
+    """An adapter whose source matches no known snippet is left untouched."""
+    write_adapter(dsh_home, "console.log('unknown upstream')\n")
+    assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
+    adapter = dsh_home / ADAPTER_REL
+    assert adapter.read_text(encoding="utf-8") == "console.log('unknown upstream')\n"
+    manifest = json.loads((dsh_home / MANIFEST).read_text(encoding="utf-8"))
+    assert "adapter_patch" not in manifest
+
+
+def test_uninstall_restores_adapter_backup(dsh_home):
+    """Uninstall restores the original adapter from backup."""
+    write_adapter(dsh_home, adapter_original_body())
+    assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
+    adapter = dsh_home / ADAPTER_REL
+    assert "if (call.id) block.callId" in adapter.read_text(encoding="utf-8")
+    assert run_cli(
+        ["--dsh-dir", str(dsh_home), "--uninstall", "--yes", "--lang", "en"]
+    ).returncode == 0
+    assert adapter.read_text(encoding="utf-8") == adapter_original_body()
+
+
+def test_uninstall_keeps_preexisting_patch(dsh_home):
+    """Uninstall of an already_patched deploy leaves the file patched."""
+    write_adapter(dsh_home, adapter_patched_body())
+    assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
+    assert run_cli(
+        ["--dsh-dir", str(dsh_home), "--uninstall", "--yes", "--lang", "en"]
+    ).returncode == 0
+    assert (dsh_home / ADAPTER_REL).read_text(encoding="utf-8") == adapter_patched_body()
+
+
+def test_deploy_without_adapter_dir_is_backward_compatible(dsh_home):
+    """A home with no profiles/node_modules still deploys AGENTS.md."""
+    assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
+    assert (dsh_home / "AGENTS.md").is_file()
+    manifest = json.loads((dsh_home / MANIFEST).read_text(encoding="utf-8"))
+    assert "adapter_patch" not in manifest

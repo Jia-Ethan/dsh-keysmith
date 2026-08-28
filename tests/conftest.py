@@ -34,6 +34,37 @@ def dsh_home(tmp_path):
     return home
 
 
+ADAPTER_REL = "profiles/node_modules/@deepseek-ai/dsh-llm-deepseek/lib/index.js"
+
+
+def write_adapter(home, body: str) -> Path:
+    """Create a fake dsh-llm-deepseek adapter under a test DSH home."""
+    path = home / ADAPTER_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def adapter_original_body() -> str:
+    """A minimal adapter source containing the ORIGINAL (buggy) snippet."""
+    return (
+        "function translate(payloads) {\n"
+        "\t\t\t\tif (call.id !== void 0) block.callId = call.id;\n"
+        "\t\t\t\tif (call.function?.name !== void 0) block.name = call.function.name;\n"
+        "}\n"
+    )
+
+
+def adapter_patched_body() -> str:
+    """The same minimal source with the patched (truthy-guard) snippet."""
+    return (
+        "function translate(payloads) {\n"
+        "\t\t\t\tif (call.id) block.callId = call.id;\n"
+        "\t\t\t\tif (call.function?.name) block.name = call.function.name;\n"
+        "}\n"
+    )
+
+
 def run_cli(args, cwd=None, env_extra=None):
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
