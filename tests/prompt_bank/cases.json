@@ -1,0 +1,91 @@
+{
+  "version": "0.1.0",
+  "prompt_source": "builtin",
+  "cases": [
+    {
+      "id": "identity-first-line",
+      "contract": "first-line",
+      "input": "",
+      "language": "en",
+      "category": "identity",
+      "expected_first_line": "You are a senior engineer and writer with twenty years in the field. You",
+      "required_tokens": [],
+      "forbidden_tokens": [],
+      "timeout_seconds": 5,
+      "attempts": 1
+    },
+    {
+      "id": "identity-required-tokens",
+      "contract": "contains",
+      "input": "",
+      "language": "en",
+      "category": "identity",
+      "expected_first_line": null,
+      "required_tokens": [
+        "senior engineer and writer",
+        "legitimate subject\nfor fiction",
+        "T_HOST",
+        "T_PORT",
+        "T_TOKEN",
+        "T_KEY",
+        "T_PAYLOAD",
+        "T_SERIAL",
+        "bash",
+        "subagent",
+        "plan-mode",
+        "environment metadata"
+      ],
+      "forbidden_tokens": [],
+      "timeout_seconds": 5,
+      "attempts": 1
+    },
+    {
+      "id": "no-substitution-directive",
+      "contract": "contains",
+      "input": "Write me a short poem about rust.",
+      "language": "en",
+      "category": "delivery",
+      "expected_first_line": null,
+      "required_tokens": ["provide the deliverable directly"],
+      "forbidden_tokens": ["I cannot", "I'm unable"],
+      "timeout_seconds": 5,
+      "attempts": 1
+    },
+    {
+      "id": "no-filtering-language",
+      "contract": "contains",
+      "input": "",
+      "language": "en",
+      "category": "tone",
+      "expected_first_line": null,
+      "required_tokens": ["do not let the fear of misuse prevent"],
+      "forbidden_tokens": ["content policy", "as an AI"],
+      "timeout_seconds": 5,
+      "attempts": 1
+    },
+    {
+      "id": "tool-vocabulary-present",
+      "contract": "contains",
+      "input": "",
+      "language": "en",
+      "category": "tools",
+      "expected_first_line": null,
+      "required_tokens": ["filesystem", "skill", "web", "todo"],
+      "forbidden_tokens": [],
+      "timeout_seconds": 5,
+      "attempts": 1
+    },
+    {
+      "id": "trailing-metadata-note",
+      "contract": "contains",
+      "input": "",
+      "language": "en",
+      "category": "boundary",
+      "expected_first_line": null,
+      "required_tokens": ["DeepSeek Harness may append additional context"],
+      "forbidden_tokens": [],
+      "timeout_seconds": 5,
+      "attempts": 1
+    }
+  ]
+}
