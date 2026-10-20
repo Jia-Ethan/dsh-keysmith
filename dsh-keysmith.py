@@ -182,6 +182,17 @@ PATCH_BODY_WARNING_UNREADABLE = (
     "could not read the composed `system-prompt` row from `dsh --profile {profile} "
     "--dump-default-config`; the patch body restates only the base fields"
 )
+PATCH_BODY_WARNING_INCOMPLETE_PROFILE = (
+    "the `{profile}` profile is incomplete; skipped `--dump-default-config` to avoid "
+    "letting dsh create profile files, so the patch body restates only the base fields"
+)
+
+PROFILE_REQUIRED_FILES = (
+    "package.json",
+    "pnpm-workspace.yaml",
+    "cordis.yml",
+    "cordis.patch.yml",
+)
 
 # ─── Adapter hot-fix (dsh-llm-deepseek empty-name clobbering) ────────────────
 # Target: <dsh-home>/profiles/node_modules/@deepseek-ai/dsh-llm-deepseek/lib/index.js
@@ -990,9 +1001,15 @@ def _render_patch_body(home: Path) -> Tuple[bytes, List[str]]:
     already on disk, because composing a missing one would create it.
     """
     warnings: List[str] = []
-    if not (home / "profiles" / DUMP_PROFILE).is_dir():
+    profile = home / "profiles" / DUMP_PROFILE
+    if not profile.is_dir():
         # Nothing on disk to read back, and the shipped default is what a fresh
         # profile would compose to anyway.
+        return BUILTIN_PATCH_YML.encode("utf-8"), warnings
+    if not all((profile / name).is_file() for name in PROFILE_REQUIRED_FILES):
+        warnings.append(
+            PATCH_BODY_WARNING_INCOMPLETE_PROFILE.format(profile=DUMP_PROFILE)
+        )
         return BUILTIN_PATCH_YML.encode("utf-8"), warnings
     binary = shutil.which("dsh")
     if binary is None:

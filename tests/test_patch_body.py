@@ -57,6 +57,10 @@ def _profile(dsh_home):
     """The `web` profile dsh would compose; its presence is what triggers the dump."""
     path = dsh_home / "profiles" / "web"
     path.mkdir(parents=True)
+    (path / "package.json").write_text("{}\n", encoding="utf-8")
+    (path / "pnpm-workspace.yaml").write_text("packages: []\n", encoding="utf-8")
+    (path / "cordis.yml").write_text("[]\n", encoding="utf-8")
+    (path / "cordis.patch.yml").write_text("[]\n", encoding="utf-8")
     return path
 
 
@@ -182,6 +186,32 @@ def test_a_home_without_the_profile_is_left_alone(cli, dsh_home, tmp_path):
     assert not marker.exists()
     assert not missing.exists()
     assert (dsh_home / "cordis.patch.yml").read_text(encoding="utf-8") == cli.BUILTIN_PATCH_YML
+
+
+def test_an_incomplete_profile_is_not_composed(cli, dsh_home, tmp_path):
+    """An existing directory is not enough: dsh would create its missing profile files."""
+    profile = dsh_home / "profiles" / "web"
+    profile.mkdir(parents=True)
+    marker = tmp_path / "called"
+    bin_dir = tmp_path / "bin"
+    _write_stub_dsh(bin_dir, DUMP, marker=marker)
+    before = sorted(path.relative_to(profile) for path in profile.rglob("*"))
+
+    result = run_cli(
+        ["--dsh-dir", str(dsh_home), "--yes", "--json", "--lang", "en"],
+        env_extra={"PATH": str(bin_dir)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not marker.exists()
+    after = sorted(path.relative_to(profile) for path in profile.rglob("*"))
+    assert after == before
+    assert not any(
+        (profile / name).exists()
+        for name in cli.PROFILE_REQUIRED_FILES
+    )
+    warnings = json.loads(result.stdout)["warnings"]
+    assert any("profile is incomplete" in warning for warning in warnings)
 
 
 def test_the_forbidden_profile_creation_is_the_reason_for_the_guard(cli, dsh_home):
