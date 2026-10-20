@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 VERSION = __version__
 
 # ─── Names and constants ─────────────────────────────────────────────────────

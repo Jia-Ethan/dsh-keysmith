@@ -19,7 +19,7 @@ def test_version_flag():
     result = run_cli(["--version"])
     assert result.returncode == 0
     assert "dsh-keysmith" in result.stdout
-    assert "0.2.1" in result.stdout
+    assert "0.2.2" in result.stdout
 
 
 def test_help_exits_zero():
