@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] — 2026-10-20
+
+### Fixed
+
+- Redeploy no longer adopts its own output as the user's original. A second
+  deploy recorded the prompt it had written as the backup, so `--uninstall`
+  restored that prompt instead of the `AGENTS.md` it had replaced; when there
+  was no pre-existing file, uninstall left the prompt behind as though the user
+  had authored it. Redeploying over a file that is still byte-identical to what
+  was written now keeps the previous manifest's answer — its backup if it had
+  one, no backup if it did not. Content the user edited in between is adopted as
+  their original, which is what they would expect. Both the text and `--json`
+  deploy paths had the bug and share the fix.
+
 ## [0.2.0] — 2026-10-20
 
 ### Added

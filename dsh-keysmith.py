@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 VERSION = __version__
 
 # ─── Names and constants ─────────────────────────────────────────────────────
@@ -674,7 +674,7 @@ def _plan_backup(
 def _journal_resource_path(home: Path, key: str, info: Dict[str, Any]) -> Path:
     """Resolve a journal resource path.
 
-    Journals written by 0.2.0 store the absolute path. Older journals stored
+    Journals written by 0.2.0 and later store the absolute path. Earlier ones stored
     only the file name, so they still resolve relative to ``$DSH_HOME``; the
     adapter key additionally has to be re-resolved through the symlink because
     the npm cache target moves when dsh is reinstalled.
