@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import shutil
 import subprocess
 import sys
+import tarfile
+import zipfile
 
 from conftest import REPO_ROOT
 
@@ -58,3 +62,48 @@ def test_bad_tag_format_rejected(tmp_path):
         env={"PYTHONUTF8": "1", "PATH": "/usr/bin:/bin"},
     )
     assert result.returncode != 0
+
+
+def test_build_from_clean_tag_emits_verified_assets(tmp_path):
+    repo = tmp_path / "source"
+    repo.mkdir()
+    (repo / "scripts").mkdir()
+    shutil.copyfile(BUILD_SCRIPT, repo / "scripts" / BUILD_SCRIPT.name)
+    for name in ("dsh-keysmith.py", "VERSION"):
+        shutil.copyfile(REPO_ROOT / name, repo / name)
+    version = (repo / "VERSION").read_text().strip()
+    tag = f"v{version}"
+
+    def git(*args):
+        subprocess.run(
+            ["git", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", *args],
+            cwd=repo, check=True, capture_output=True,
+        )
+
+    git("init")
+    git("config", "user.name", "Release test")
+    git("config", "user.email", "release-test@example.invalid")
+    git("add", ".")
+    git("commit", "-m", "release fixture")
+    git("tag", tag)
+    out = tmp_path / "artifacts"
+    result = subprocess.run(
+        [sys.executable, "scripts/build_release.py", "--tag", tag, "--out", str(out)],
+        cwd=repo, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    checksums = (out / "SHA256SUMS").read_text().splitlines()
+    assert len(checksums) == 3
+    for row in checksums:
+        digest, name = row.split("  ", 1)
+        assert hashlib.sha256((out / name).read_bytes()).hexdigest() == digest
+    cli = (repo / "dsh-keysmith.py").read_bytes()
+    assert (out / f"dsh-keysmith-{tag}.py").read_bytes() == cli
+    prefix = f"dsh-keysmith-{tag}/"
+    with zipfile.ZipFile(out / f"dsh-keysmith-{tag}.zip") as archive:
+        assert archive.testzip() is None
+        assert archive.read(prefix + "dsh-keysmith.py") == cli
+        assert archive.read(prefix + "VERSION").decode().strip() == version
+    with tarfile.open(out / f"dsh-keysmith-{tag}.tar.gz") as archive:
+        assert archive.extractfile(prefix + "dsh-keysmith.py").read() == cli
+        assert archive.extractfile(prefix + "VERSION").read().decode().strip() == version

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Correct the ZIP entry constructor so release builds can produce the standalone
+  CLI, ZIP, tar.gz, and checksums from a clean tagged tree.
+
 - Skip config composition when `profiles/web` is incomplete. Deployment falls
   back with a warning instead of allowing dsh to create unowned profile files.
 
