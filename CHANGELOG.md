@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] — Unreleased
+## [0.2.0] — 2026-10-20
 
 ### Added
 
@@ -27,6 +27,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--status` reports the live adapter patch state.
 - Bilingual messages for all adapter-related transitions, plus a restart
   hint (running dsh processes must restart to load the patched module).
+- `--json` machine-readable contract (`dsh-keysmith/v1`) for deploy,
+  `--status`, `--uninstall`, and `--recover`. JSON payloads are
+  language-neutral. Argument errors also emit JSON when `--json` is set.
+- Every JSON payload now carries `version`, so a consumer can reject an
+  adapter that is older than the contract it expects without parsing
+  `--version` text.
+- `--status --json` reports `dsh_dir_exists`, separating "dsh has never run
+  here" from "dsh home exists but nothing is deployed".
+- `--status --json` reports `state` — `not-installed` / `active` / `drift` /
+  `recovery-required` — plus a `drift` list naming each managed file that
+  changed or vanished since deploy. Previously status said `ok: true` for a
+  hand-edited `AGENTS.md` while `--uninstall` refused it; both now share one
+  comparison (`_drifted_resources`), so they cannot disagree.
+
+### Fixed
+
+- The recover journal now records absolute resource paths. It stored only the
+  file name, so an interrupted deploy would have restored the adapter patch
+  into `$DSH_HOME/index.js` instead of
+  `profiles/node_modules/@deepseek-ai/dsh-llm-deepseek/lib/index.js`. Journals
+  written by earlier builds still resolve relative to `$DSH_HOME`.
 
 ### Changed
 

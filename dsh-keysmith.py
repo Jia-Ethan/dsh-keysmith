@@ -117,6 +117,11 @@ UNINSTALL_TERMINAL_PHASES = (PHASE_U_COMMITTED, PHASE_U_RECOVERED)
 
 OPERATION_DEPLOY = "deploy"
 OPERATION_UNINSTALL = "uninstall"
+OPERATION_STATUS = "status"
+OPERATION_RECOVER = "recover"
+
+JSON_SCHEMA = "dsh-keysmith/v1"
+_LAST_USAGE_ERROR: List[Optional[str]] = [None]
 
 # ─── Bundled patch body (byte-identical across AGENTS.md? no — the patch
 #     file body; kept here so the deploy is self-contained) ───────────────────
@@ -590,9 +595,11 @@ def _create_deployment_journals(
         "transaction_id": tid,
         "phase": PHASE_INITIALIZING,
         "owner_directory": str(home),
+        # Absolute paths: the adapter resource lives in the npm cache, outside
+        # $DSH_HOME, so a bare file name would restore it into the wrong place.
         "resources": {
             key: {
-                "path": entry["path"].name,
+                "path": str(entry["path"]),
                 "before": entry.get("before"),
                 "allowed_absent": entry.get("before") is None,
             }
@@ -617,10 +624,695 @@ def _looks_like_dsh_home(home: Path) -> bool:
     return (home / "profiles").is_dir() or home == _default_dsh_home() or not home.exists()
 
 
+def _live_resource_path(home: Path, key: str, entry: Dict[str, Any]) -> Path:
+    if key == RESOURCE_ADAPTER:
+        resolved = _adapter_resolve(home)
+        return resolved if resolved is not None else _adapter_symlink_path(home)
+    return home / str(entry.get("path") or RESOURCE_FILENAMES[key])
+
+
+def _journal_resource_path(home: Path, key: str, info: Dict[str, Any]) -> Path:
+    """Resolve a journal resource path.
+
+    Journals written by 0.2.0 store the absolute path. Older journals stored
+    only the file name, so they still resolve relative to ``$DSH_HOME``; the
+    adapter key additionally has to be re-resolved through the symlink because
+    the npm cache target moves when dsh is reinstalled.
+    """
+    raw = info.get("path")
+    if not raw:
+        return home / RESOURCE_FILENAMES[key]
+    path = Path(str(raw)).expanduser()
+    if not path.is_absolute():
+        return home / path
+    if key == RESOURCE_ADAPTER:
+        resolved = _adapter_resolve(home)
+        return resolved if resolved is not None else _adapter_symlink_path(home)
+    return path
+
+
+def _drifted_resources(
+    home: Path, manifest: Dict[str, Any]
+) -> List[Tuple[str, Path, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]]:
+    """Return every managed resource whose live bytes differ from the manifest.
+
+    Deploy, status and uninstall must agree on what drift means; this is the one
+    place that decides it. Entries that the manifest never recorded are ignored,
+    exactly as the deploy final sweep does.
+    """
+    drifted: List[Tuple[str, Path, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]] = []
+    for key in DEPLOY_RESOURCES:
+        entry = manifest.get(key)
+        if entry is None:
+            continue
+        path = _live_resource_path(home, key, entry or {})
+        live = _fingerprint(path)
+        if not _fingerprints_match(live, (entry or {}).get("after")):
+            drifted.append((key, path, live, (entry or {}).get("after")))
+    return drifted
+
+
 # ─── Status ──────────────────────────────────────────────────────────────────
 
 
-def _cmd_status(home: Path, lang_set: bool) -> int:
+def _json_dump(payload: Dict[str, Any]) -> None:
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _json_report(
+    operation: str,
+    mode: str,
+    ok: bool,
+    exit_status: int,
+    *,
+    actions: Optional[List[Dict[str, str]]] = None,
+    warnings: Optional[List[str]] = None,
+    blockers: Optional[List[str]] = None,
+    error: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "schema": JSON_SCHEMA,
+        "version": VERSION,
+        "operation": operation,
+        "mode": mode,
+        "ok": ok,
+        "actions": actions or [],
+        "warnings": warnings or [],
+        "blockers": blockers or [],
+        "exit_status": exit_status,
+        "error": error,
+    }
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+def _json_action(action: str, path: Any, detail: str = "") -> Dict[str, str]:
+    return {"action": action, "path": str(path), "detail": detail}
+
+
+def _residue_items(home: Path) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    for tid, path in _find_transactions(home):
+        journal = _load_journal(path)
+        items.append(
+            {
+                "kind": "transaction",
+                "id": tid,
+                "path": str(path),
+                "phase": (journal or {}).get("phase"),
+                "operation": (journal or {}).get("operation"),
+            }
+        )
+    for tid, path in _find_cleanup_markers(home):
+        items.append(
+            {
+                "kind": "cleanup_marker",
+                "id": tid,
+                "path": str(path),
+                "phase": None,
+                "operation": None,
+            }
+        )
+    return items
+
+
+def _adapter_status_payload(home: Path, manifest: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    adapter_real = _adapter_resolve(home)
+    live_state, _ = _adapter_patch_state(adapter_real)
+    managed_entry = (manifest or {}).get(RESOURCE_ADAPTER)
+    return {
+        "state": live_state,
+        "path": str(adapter_real) if adapter_real is not None else None,
+        "managed": managed_entry is not None,
+        "already_patched": None if managed_entry is None else bool(managed_entry.get("already_patched")),
+    }
+
+
+def _manifest_public(manifest: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if manifest is None:
+        return None
+    resources = {}
+    for key in DEPLOY_RESOURCES:
+        entry = manifest.get(key)
+        if entry is None:
+            continue
+        resources[key] = {
+            "path": entry.get("path"),
+            "backup": entry.get("backup"),
+            "already_patched": entry.get("already_patched"),
+            "after_sha256": ((entry.get("after") or {}).get("sha256")),
+        }
+    return {
+        "deployment_id": manifest.get("deployment_id"),
+        "tool_version": manifest.get("tool_version"),
+        "created_at": manifest.get("created_at"),
+        "resources": resources,
+        "previous_manifest": bool((manifest.get("previous_manifest") or {}).get("fingerprint")),
+    }
+
+
+def _deployment_state(
+    home: Path, manifest: Optional[Dict[str, Any]], residue: List[Dict[str, Any]]
+) -> Tuple[str, List[str]]:
+    """Classify the deployment for callers that need more than ok/ready.
+
+    Returns ``(state, drift_notes)`` where state is one of ``not-installed``,
+    ``recovery-required``, ``drift`` or ``active``. ``ok`` stays true for drift:
+    the deployment exists and is readable, it just no longer matches what was
+    written. Callers decide what to show.
+    """
+    if residue:
+        return "recovery-required", []
+    if manifest is None:
+        return "not-installed", []
+    notes: List[str] = []
+    for key, path, live, _after in _drifted_resources(home, manifest):
+        if live is None:
+            notes.append(f"{key}: missing since deploy: {path}")
+        else:
+            notes.append(f"{key}: changed since deploy: {path}")
+    return ("drift" if notes else "active"), notes
+
+
+def _json_cmd_status(home: Path) -> int:
+    manifest = _load_manifest(home)
+    residue = _residue_items(home)
+    ready = not residue
+    blockers = [
+        f"unfinished transaction residue: {item['path']}"
+        for item in residue
+    ]
+    exit_status = 0 if ready else 1
+    state, drift_notes = _deployment_state(home, manifest, residue)
+    _json_dump(
+        _json_report(
+            OPERATION_STATUS,
+            "preview",
+            ready,
+            exit_status,
+            blockers=blockers,
+            extra={
+                "dsh_dir": str(home),
+                "dsh_dir_exists": home.exists(),
+                "ready": ready,
+                "state": state,
+                "drift": drift_notes,
+                "residue": residue,
+                "manifest": _manifest_public(manifest),
+                "adapter_patch": _adapter_status_payload(home, manifest),
+            },
+        )
+    )
+    return exit_status
+
+
+def _collect_deploy_plan(
+    home: Path, file_arg: Optional[str], name: str
+) -> Tuple[int, Dict[str, Any], Optional[bytes], str, Optional[bytes], Optional[Path]]:
+    """Return (exit_status, report_fields, prompt_bytes, adapter_state, adapter_patched_bytes, adapter_real).
+
+    exit_status 0 means the caller may continue to execute. Non-zero reports are complete.
+    """
+    warnings: List[str] = []
+    blockers: List[str] = []
+    actions: List[Dict[str, str]] = []
+    if not home.exists():
+        message = f"DSH directory does not exist: {home}"
+        return (
+            2,
+            _json_report(OPERATION_DEPLOY, "preview", False, 2, error=message, blockers=[message], extra={"dsh_dir": str(home), "name": name}),
+            None,
+            ADAPTER_ABSENT,
+            None,
+            None,
+        )
+    residue = _residue_items(home)
+    if residue:
+        blockers = [f"unfinished transaction residue: {item['path']}" for item in residue]
+        return (
+            1,
+            _json_report(
+                OPERATION_DEPLOY,
+                "preview",
+                False,
+                1,
+                blockers=blockers,
+                extra={"dsh_dir": str(home), "name": name, "residue": residue, "adapter_patch": _adapter_status_payload(home, _load_manifest(home))},
+            ),
+            None,
+            ADAPTER_ABSENT,
+            None,
+            None,
+        )
+
+    source_kind = "builtin"
+    source_path: Optional[str] = None
+    if file_arg is not None:
+        source = Path(file_arg).expanduser()
+        if not source.is_file():
+            message = f"instruction file does not exist: {source}"
+            return (
+                2,
+                _json_report(OPERATION_DEPLOY, "preview", False, 2, error=message, blockers=[message], extra={"dsh_dir": str(home), "name": name}),
+                None,
+                ADAPTER_ABSENT,
+                None,
+                None,
+            )
+        prompt_bytes = source.read_bytes()
+        source_kind = "file"
+        source_path = str(source)
+    else:
+        prompt_bytes = BUILTIN_DSH_UNRESTRICTED_MD.encode("utf-8")
+
+    agents_path = home / AGENTS_FILENAME
+    patch_path = home / PATCH_FILENAME
+    agents_before = _fingerprint(agents_path)
+    patch_before = _fingerprint(patch_path)
+    actions.append(_json_action("create" if agents_before is None else "replace", agents_path, RESOURCE_AGENTS))
+    actions.append(_json_action("create" if patch_before is None else "replace", patch_path, RESOURCE_PATCH))
+    actions.append(_json_action("write", _manifest_path(home), "manifest"))
+
+    adapter_real = _adapter_resolve(home)
+    adapter_state, adapter_patched_bytes = _adapter_patch_state(adapter_real)
+    if adapter_state == ADAPTER_PRISTINE:
+        actions.append(_json_action("patch", adapter_real, adapter_state))
+    elif adapter_state == ADAPTER_PATCHED:
+        actions.append(_json_action("noop", adapter_real, adapter_state))
+        warnings.append("adapter already patched; deploy will record ownership without rewriting")
+    elif adapter_state == ADAPTER_UNKNOWN:
+        warnings.append("adapter source matches no known snippet; skipping adapter patch")
+        actions.append(_json_action("skip", adapter_real, adapter_state))
+    else:
+        warnings.append("adapter file absent; skipping adapter patch")
+        actions.append(_json_action("skip", _adapter_symlink_path(home), adapter_state))
+
+    extra = {
+        "dsh_dir": str(home),
+        "name": name,
+        "source": {"kind": source_kind, "path": source_path},
+        "adapter_patch": _adapter_status_payload(home, _load_manifest(home)),
+        "target": {
+            RESOURCE_AGENTS: str(agents_path),
+            RESOURCE_PATCH: str(patch_path),
+        },
+    }
+    return (
+        0,
+        _json_report(OPERATION_DEPLOY, "preview", True, 0, actions=actions, warnings=warnings, extra=extra),
+        prompt_bytes,
+        adapter_state,
+        adapter_patched_bytes,
+        adapter_real,
+    )
+
+
+def _json_cmd_deploy(home: Path, file_arg: Optional[str], name: str, yes: bool) -> int:
+    exit_status, report, prompt_bytes, adapter_state, adapter_patched_bytes, adapter_real = _collect_deploy_plan(
+        home, file_arg, name
+    )
+    if exit_status != 0:
+        report["mode"] = "execute" if yes else "preview"
+        _json_dump(report)
+        return exit_status
+    if not yes:
+        _json_dump(report)
+        return 0
+
+    # Confirmed execute — same write sequence as the text path.
+    assert prompt_bytes is not None
+    tid = _new_transaction_id()
+    now = datetime.now(timezone.utc).isoformat()
+    ts = _timestamp()
+    agents_path = home / AGENTS_FILENAME
+    patch_path = home / PATCH_FILENAME
+    agents_before = _fingerprint(agents_path)
+    patch_before = _fingerprint(patch_path)
+    agents_backup: Optional[str] = f"{AGENTS_FILENAME}.bak_{ts}" if agents_before is not None else None
+    patch_backup: Optional[str] = f"{PATCH_FILENAME}.bak_{ts}" if patch_before is not None else None
+    adapter_backup: Optional[str] = f"adapter-index.js.bak_{ts}" if adapter_state == ADAPTER_PRISTINE else None
+    adapter_symlink_view = _adapter_symlink_path(home)
+    resources = {
+        RESOURCE_AGENTS: {
+            "path": agents_path,
+            "before": agents_before,
+            "snapshot": agents_path.read_bytes() if agents_before is not None else None,
+        },
+        RESOURCE_PATCH: {
+            "path": patch_path,
+            "before": patch_before,
+            "snapshot": patch_path.read_bytes() if patch_before is not None else None,
+        },
+    }
+    if adapter_state in (ADAPTER_PRISTINE, ADAPTER_PATCHED):
+        resources[RESOURCE_ADAPTER] = {
+            "path": adapter_real if adapter_real is not None else adapter_symlink_view,
+            "before": _fingerprint(adapter_real) if adapter_real is not None else None,
+            "snapshot": adapter_real.read_bytes()
+            if (adapter_real is not None and adapter_state == ADAPTER_PRISTINE)
+            else None,
+            "display_path": adapter_symlink_view,
+        }
+    txn = _create_deployment_journals(home, tid, OPERATION_DEPLOY, resources)
+    journal = _load_journal(txn)
+    assert journal is not None
+
+    def set_phase(phase: str) -> None:
+        journal["phase"] = phase
+        _write_journal(txn, journal)
+
+    set_phase(PHASE_PREPARED)
+    if agents_backup is not None:
+        _atomic_write(home / agents_backup, resources[RESOURCE_AGENTS]["snapshot"])
+    if patch_backup is not None:
+        _atomic_write(home / patch_backup, resources[RESOURCE_PATCH]["snapshot"])
+    if adapter_backup is not None:
+        _atomic_write(home / adapter_backup, resources[RESOURCE_ADAPTER]["snapshot"])
+    set_phase(PHASE_AGENTS_INTENT)
+    _atomic_write(agents_path, prompt_bytes)
+    set_phase(PHASE_PATCH_INTENT)
+    _atomic_write(patch_path, BUILTIN_PATCH_YML.encode("utf-8"))
+    set_phase(PHASE_ADAPTER_INTENT)
+    if adapter_state == ADAPTER_PRISTINE and adapter_patched_bytes is not None:
+        assert adapter_real is not None
+        _atomic_write(adapter_real, adapter_patched_bytes)
+    prev_manifest_fp = _fingerprint(_manifest_path(home))
+    manifest = {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "tool_version": VERSION,
+        "deployment_id": tid,
+        "created_at": now,
+        RESOURCE_AGENTS: _resource_entry(agents_path, agents_before, _fingerprint(agents_path), agents_backup),
+        RESOURCE_PATCH: _resource_entry(patch_path, patch_before, _fingerprint(patch_path), patch_backup),
+        "previous_manifest": {"fingerprint": prev_manifest_fp, "backup": None},
+    }
+    if adapter_state == ADAPTER_PRISTINE:
+        assert adapter_real is not None
+        entry = _resource_entry(
+            adapter_real, resources[RESOURCE_ADAPTER]["before"], _fingerprint(adapter_real), adapter_backup
+        )
+        entry["already_patched"] = False
+        manifest[RESOURCE_ADAPTER] = entry
+    elif adapter_state == ADAPTER_PATCHED:
+        assert adapter_real is not None
+        entry = _resource_entry(
+            adapter_real, resources[RESOURCE_ADAPTER]["before"], _fingerprint(adapter_real), None
+        )
+        entry["already_patched"] = True
+        manifest[RESOURCE_ADAPTER] = entry
+    _atomic_write(txn / MANIFEST_INTENT_PENDING_FILENAME, _serialize_manifest(manifest))
+    _atomic_write(txn / MANIFEST_INTENT_FILENAME, _serialize_manifest(manifest))
+    _atomic_write(_manifest_path(home), _serialize_manifest(manifest))
+    set_phase(PHASE_FINAL_SWEEP)
+    drifted = _drifted_resources(home, manifest)
+    if drifted:
+        key, path, _live, _after = drifted[0]
+        message = f"target drifted from the manifest, refusing to overwrite: {path}"
+        _json_dump(
+            _json_report(
+                OPERATION_DEPLOY,
+                "execute",
+                False,
+                1,
+                error=message,
+                blockers=[message],
+                actions=report["actions"],
+                extra={"dsh_dir": str(home), "name": name, "journal_dir": str(txn)},
+            )
+        )
+        return 1
+    marker = home / f"{CLEANUP_MARKER_PREFIX}{tid}{CLEANUP_MARKER_SUFFIX}"
+    marker_payload = {
+        "transaction_id": tid,
+        "operation": OPERATION_DEPLOY,
+        "members": [RESOURCE_FILENAMES[key] for key in DEPLOY_RESOURCES if key in manifest],
+    }
+    _atomic_write(marker, (json.dumps(marker_payload, sort_keys=True, indent=2) + "\n").encode("utf-8"))
+    set_phase(PHASE_COMMITTED)
+    shutil.rmtree(txn)
+    marker.unlink(missing_ok=True)
+    execute_actions = list(report["actions"])
+    if agents_backup:
+        execute_actions.append(_json_action("backup", home / agents_backup, RESOURCE_AGENTS))
+    if patch_backup:
+        execute_actions.append(_json_action("backup", home / patch_backup, RESOURCE_PATCH))
+    if adapter_backup:
+        execute_actions.append(_json_action("backup", home / adapter_backup, RESOURCE_ADAPTER))
+    _json_dump(
+        _json_report(
+            OPERATION_DEPLOY,
+            "execute",
+            True,
+            0,
+            actions=execute_actions,
+            warnings=report.get("warnings") or [],
+            extra={
+                "dsh_dir": str(home),
+                "name": name,
+                "deployment_id": tid,
+                "manifest": _manifest_public(manifest),
+                "adapter_patch": _adapter_status_payload(home, manifest),
+            },
+        )
+    )
+    return 0
+
+
+def _json_cmd_uninstall(home: Path, yes: bool) -> int:
+    mode = "execute" if yes else "preview"
+    manifest = _load_manifest(home)
+    if manifest is None:
+        message = "no dsh-keysmith manifest found; nothing to uninstall"
+        _json_dump(_json_report(OPERATION_UNINSTALL, mode, False, 1, error=message, blockers=[message], extra={"dsh_dir": str(home)}))
+        return 1
+    residue = _residue_items(home)
+    if residue:
+        blockers = [f"unfinished transaction residue: {item['path']}" for item in residue]
+        _json_dump(
+            _json_report(
+                OPERATION_UNINSTALL,
+                mode,
+                False,
+                1,
+                blockers=blockers,
+                extra={"dsh_dir": str(home), "residue": residue, "manifest": _manifest_public(manifest), "adapter_patch": _adapter_status_payload(home, manifest)},
+            )
+        )
+        return 1
+    actions: List[Dict[str, str]] = []
+    drifted = _drifted_resources(home, manifest)
+    if drifted:
+        _key, path, _live, _after = drifted[0]
+        message = f"target drifted from the manifest, refusing to overwrite: {path}"
+        _json_dump(
+            _json_report(
+                OPERATION_UNINSTALL,
+                mode,
+                False,
+                1,
+                error=message,
+                blockers=[message],
+                extra={"dsh_dir": str(home), "manifest": _manifest_public(manifest)},
+            )
+        )
+        return 1
+    for key in DEPLOY_RESOURCES:
+        if key not in manifest:
+            continue
+        entry = manifest.get(key) or {}
+        if entry.get("backup"):
+            actions.append(_json_action("restore", home / RESOURCE_FILENAMES[key], key))
+        else:
+            actions.append(_json_action("remove", home / RESOURCE_FILENAMES[key], key))
+    if not yes:
+        _json_dump(
+            _json_report(
+                OPERATION_UNINSTALL,
+                "preview",
+                True,
+                0,
+                actions=actions,
+                extra={"dsh_dir": str(home), "manifest": _manifest_public(manifest), "adapter_patch": _adapter_status_payload(home, manifest)},
+            )
+        )
+        return 0
+
+    tid = _new_transaction_id()
+    ts = _timestamp()
+    resources = {}
+    for key in DEPLOY_RESOURCES:
+        if key not in manifest:
+            continue
+        entry = manifest.get(key) or {}
+        live_path = _live_resource_path(home, key, entry)
+        resources[key] = {
+            "path": live_path,
+            "before": entry.get("after"),
+            "snapshot": live_path.read_bytes() if live_path.exists() else None,
+        }
+    txn = _create_deployment_journals(home, tid, OPERATION_UNINSTALL, resources)
+    journal = _load_journal(txn)
+    assert journal is not None
+
+    def set_phase(phase: str) -> None:
+        journal["phase"] = phase
+        _write_journal(txn, journal)
+
+    set_phase(PHASE_U_PREPARED)
+    set_phase(PHASE_U_AGENTS_INTENT)
+    entry = manifest.get(RESOURCE_AGENTS) or {}
+    backup = entry.get("backup")
+    if backup:
+        _atomic_write(home / AGENTS_FILENAME, (home / backup).read_bytes())
+    else:
+        (home / AGENTS_FILENAME).unlink(missing_ok=True)
+    set_phase(PHASE_U_PATCH_INTENT)
+    entry = manifest.get(RESOURCE_PATCH) or {}
+    backup = entry.get("backup")
+    if backup:
+        _atomic_write(home / PATCH_FILENAME, (home / backup).read_bytes())
+    else:
+        (home / PATCH_FILENAME).unlink(missing_ok=True)
+    if RESOURCE_ADAPTER in manifest:
+        entry = manifest.get(RESOURCE_ADAPTER) or {}
+        backup = entry.get("backup")
+        if backup and (home / backup).exists():
+            adapter_real = _adapter_resolve(home)
+            if adapter_real is not None:
+                _atomic_write(adapter_real, (home / backup).read_bytes())
+    set_phase(PHASE_U_FINAL_SWEEP)
+    archive = home / f"{MANIFEST_FILENAME}.uninstalled_{ts}"
+    if _manifest_path(home).exists():
+        _atomic_write(archive, _manifest_path(home).read_bytes())
+        actions.append(_json_action("backup", archive, "manifest"))
+    _manifest_path(home).unlink(missing_ok=True)
+    set_phase(PHASE_U_COMMITTED)
+    shutil.rmtree(txn)
+    _json_dump(
+        _json_report(
+            OPERATION_UNINSTALL,
+            "execute",
+            True,
+            0,
+            actions=actions,
+            extra={"dsh_dir": str(home), "adapter_patch": _adapter_status_payload(home, None)},
+        )
+    )
+    return 0
+
+
+def _json_cmd_recover(home: Path, yes: bool) -> int:
+    mode = "execute" if yes else "preview"
+    txns = _find_transactions(home)
+    markers = _find_cleanup_markers(home)
+    residue = _residue_items(home)
+    extra = {"dsh_dir": str(home), "residue": residue}
+    if not txns and not markers:
+        _json_dump(_json_report(OPERATION_RECOVER, mode, True, 0, extra=extra))
+        return 0
+    tids = {tid for tid, _ in txns} | {tid for tid, _ in markers}
+    if len(tids) > 1:
+        message = "multiple transactions found; recover exactly one at a time"
+        _json_dump(_json_report(OPERATION_RECOVER, mode, False, 1, error=message, blockers=[message], extra=extra))
+        return 1
+    if not txns and markers:
+        actions = [_json_action("remove", path, "cleanup_marker") for _tid, path in markers]
+        if not yes:
+            _json_dump(_json_report(OPERATION_RECOVER, "preview", True, 0, actions=actions, extra=extra))
+            return 0
+        for _tid, path in markers:
+            path.unlink()
+        _json_dump(_json_report(OPERATION_RECOVER, "execute", True, 0, actions=actions, extra={"dsh_dir": str(home), "residue": []}))
+        return 0
+
+    tid, txn = txns[0]
+    journal = _load_journal(txn)
+    if journal is None:
+        message = f"unfinished transaction residue: {txn}"
+        _json_dump(_json_report(OPERATION_RECOVER, mode, False, 1, error=message, blockers=[message], extra=extra))
+        return 1
+    phase = journal.get("phase", PHASE_INITIALIZING)
+    extra["journal_dir"] = str(txn)
+    extra["phase"] = phase
+    extra["journal_operation"] = journal.get("operation")
+    if phase in DEPLOY_TERMINAL_PHASES and journal.get("operation") == OPERATION_DEPLOY:
+        actions = [_json_action("remove", txn, "transaction")]
+        actions.extend(_json_action("remove", mpath, "cleanup_marker") for _mtid, mpath in markers)
+        if not yes:
+            _json_dump(_json_report(OPERATION_RECOVER, "preview", True, 0, actions=actions, extra=extra))
+            return 0
+        for _mtid, mpath in markers:
+            mpath.unlink(missing_ok=True)
+        shutil.rmtree(txn)
+        _json_dump(_json_report(OPERATION_RECOVER, "execute", True, 0, actions=actions, extra={"dsh_dir": str(home), "residue": []}))
+        return 0
+    if phase in UNINSTALL_TERMINAL_PHASES and journal.get("operation") == OPERATION_UNINSTALL:
+        actions = [_json_action("remove", txn, "transaction")]
+        actions.extend(_json_action("remove", mpath, "cleanup_marker") for _mtid, mpath in markers)
+        if not yes:
+            _json_dump(_json_report(OPERATION_RECOVER, "preview", True, 0, actions=actions, extra=extra))
+            return 0
+        for _mtid, mpath in markers:
+            mpath.unlink(missing_ok=True)
+        shutil.rmtree(txn)
+        _json_dump(_json_report(OPERATION_RECOVER, "execute", True, 0, actions=actions, extra={"dsh_dir": str(home), "residue": []}))
+        return 0
+
+    journal_resources = journal.get("resources") or {}
+    manifest = _load_manifest(home)
+    actions = [_json_action("restore", txn, f"phase={phase}")]
+    if not yes:
+        _json_dump(_json_report(OPERATION_RECOVER, "preview", True, 0, actions=actions, extra=extra))
+        return 0
+    for key in DEPLOY_RESOURCES:
+        info = journal_resources.get(key) or {}
+        path = _journal_resource_path(home, key, info)
+        before_fp = info.get("before")
+        live = _fingerprint(path)
+        if live is None or _fingerprints_match(live, before_fp):
+            continue
+        entry = (manifest or {}).get(key) or {}
+        if _fingerprints_match(live, entry.get("after")):
+            continue
+        if (txn / f"snapshot-{key}").exists() or before_fp is None:
+            continue
+        message = f"target drifted from the manifest, refusing to overwrite: {path}"
+        _json_dump(_json_report(OPERATION_RECOVER, "execute", False, 1, error=message, blockers=[message], extra=extra))
+        return 1
+
+    journal["phase"] = PHASE_RECOVERING
+    _write_journal(txn, journal)
+    manifest_intent = _read_journal_file(txn / MANIFEST_INTENT_FILENAME)
+    if manifest_intent is not None:
+        _atomic_write(_manifest_path(home), _serialize_manifest(manifest_intent))
+        actions.append(_json_action("restore", _manifest_path(home), "manifest"))
+    elif journal.get("operation") == OPERATION_UNINSTALL:
+        _manifest_path(home).unlink(missing_ok=True)
+        actions.append(_json_action("remove", _manifest_path(home), "manifest"))
+    for key in reversed(DEPLOY_RESOURCES):
+        info = journal_resources.get(key) or {}
+        path = _journal_resource_path(home, key, info)
+        snapshot_path = txn / f"snapshot-{key}"
+        if snapshot_path.exists():
+            _atomic_write(path, snapshot_path.read_bytes())
+            actions.append(_json_action("restore", path, key))
+        else:
+            path.unlink(missing_ok=True)
+            actions.append(_json_action("remove", path, key))
+    journal["phase"] = PHASE_RECOVERED
+    _write_journal(txn, journal)
+    shutil.rmtree(txn)
+    for _mtid, mpath in markers:
+        mpath.unlink(missing_ok=True)
+    _json_dump(_json_report(OPERATION_RECOVER, "execute", True, 0, actions=actions, extra={"dsh_dir": str(home), "residue": []}))
+    return 0
+
+
+def _cmd_status(home: Path, lang_set: bool, json_mode: bool = False) -> int:
+    if json_mode:
+        return _json_cmd_status(home)
     print(_tr("banner"))
     print(f"{_tr('dsh_dir')}: {home}")
     manifest = _load_manifest(home)
@@ -671,7 +1363,9 @@ def _cmd_status(home: Path, lang_set: bool) -> int:
 # ─── Deploy ──────────────────────────────────────────────────────────────────
 
 
-def _cmd_deploy(home: Path, file_arg: Optional[str], name: str, yes: bool) -> int:
+def _cmd_deploy(home: Path, file_arg: Optional[str], name: str, yes: bool, json_mode: bool = False) -> int:
+    if json_mode:
+        return _json_cmd_deploy(home, file_arg, name, yes)
     print(_tr("banner"))
     print(f"{_tr('dsh_dir')}: {home}")
     if not home.exists():
@@ -874,7 +1568,9 @@ def _cmd_deploy(home: Path, file_arg: Optional[str], name: str, yes: bool) -> in
 # ─── Uninstall ───────────────────────────────────────────────────────────────
 
 
-def _cmd_uninstall(home: Path, yes: bool) -> int:
+def _cmd_uninstall(home: Path, yes: bool, json_mode: bool = False) -> int:
+    if json_mode:
+        return _json_cmd_uninstall(home, yes)
     print(_tr("banner"))
     print(f"{_tr('dsh_dir')}: {home}")
     manifest = _load_manifest(home)
@@ -919,12 +1615,11 @@ def _cmd_uninstall(home: Path, yes: bool) -> int:
         if key not in manifest:
             continue
         entry = manifest.get(key) or {}
+        live_path = _live_resource_path(home, key, entry)
         resources[key] = {
-            "path": home / RESOURCE_FILENAMES[key],
+            "path": live_path,
             "before": entry.get("after"),
-            "snapshot": (home / RESOURCE_FILENAMES[key]).read_bytes()
-            if (home / RESOURCE_FILENAMES[key]).exists()
-            else None,
+            "snapshot": live_path.read_bytes() if live_path.exists() else None,
         }
     txn = _create_deployment_journals(home, tid, OPERATION_UNINSTALL, resources)
     journal = _load_journal(txn)
@@ -978,7 +1673,9 @@ def _cmd_uninstall(home: Path, yes: bool) -> int:
 # ─── Recover ─────────────────────────────────────────────────────────────────
 
 
-def _cmd_recover(home: Path, yes: bool) -> int:
+def _cmd_recover(home: Path, yes: bool, json_mode: bool = False) -> int:
+    if json_mode:
+        return _json_cmd_recover(home, yes)
     print(_tr("banner"))
     print(f"{_tr('dsh_dir')}: {home}")
     txns = _find_transactions(home)
@@ -1042,7 +1739,7 @@ def _cmd_recover(home: Path, yes: bool) -> int:
     manifest = _load_manifest(home)
     for key in DEPLOY_RESOURCES:
         info = journal_resources.get(key) or {}
-        path = home / info.get("path", RESOURCE_FILENAMES[key])
+        path = _journal_resource_path(home, key, info)
         before_fp = info.get("before")
         live = _fingerprint(path)
         if live is None or _fingerprints_match(live, before_fp):
@@ -1069,7 +1766,7 @@ def _cmd_recover(home: Path, yes: bool) -> int:
 
     for key in reversed(DEPLOY_RESOURCES):
         info = journal_resources.get(key) or {}
-        path = home / info.get("path", RESOURCE_FILENAMES[key])
+        path = _journal_resource_path(home, key, info)
         snapshot_path = txn / f"snapshot-{key}"
         if snapshot_path.exists():
             _atomic_write(path, snapshot_path.read_bytes())
@@ -1102,8 +1799,43 @@ def _prescan_language(argv: List[str]) -> str:
     return _resolve_output_language("auto")
 
 
+class _ContractArgumentParser(argparse.ArgumentParser):
+    """ArgumentParser that records usage errors so ``--json`` callers get JSON."""
+
+    def error(self, message: str) -> "None":
+        _LAST_USAGE_ERROR[0] = message
+        super().error(message)
+
+
+def _usage_error_mode(argv: List[str]) -> str:
+    return "preview" if "--yes" not in argv else "execute"
+
+
+def _operation_from_argv(argv: List[str]) -> str:
+    if "--status" in argv:
+        return OPERATION_STATUS
+    if "--uninstall" in argv:
+        return OPERATION_UNINSTALL
+    if "--recover" in argv:
+        return OPERATION_RECOVER
+    return OPERATION_DEPLOY
+
+
+def _emit_usage_error_as_contract(operation: str, message: str, mode: str) -> None:
+    _json_dump(
+        _json_report(
+            operation,
+            mode,
+            False,
+            2,
+            error=message,
+            blockers=[message],
+        )
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _ContractArgumentParser(
         prog=TOOL_NAME,
         description=_localized(
             "先预览、再写入、可撤销的 DeepSeek Harness 指令部署工具。",
@@ -1130,6 +1862,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--yes", action="store_true", help=_localized(
         "确认执行写入操作。",
         "Confirm the write operation.",
+    ))
+    parser.add_argument("--json", action="store_true", help=_localized(
+        "输出稳定 JSON（dsh-keysmith/v1）。",
+        "Emit stable JSON (dsh-keysmith/v1).",
     ))
     parser.add_argument("--version", action="version", version=f"{TOOL_NAME} {VERSION}")
     group = parser.add_mutually_exclusive_group()
@@ -1164,27 +1900,58 @@ def main(argv: Optional[List[str]] = None) -> int:
             except (ValueError, OSError):
                 pass
     parser = _build_parser()
-    args = parser.parse_args(args_list)
+    json_requested = "--json" in args_list
+    if json_requested:
+        operation = _operation_from_argv(args_list)
+        try:
+            args = parser.parse_args(args_list)
+        except SystemExit as exit_request:
+            status = exit_request.code if isinstance(exit_request.code, int) else 2
+            if status == 0:
+                raise
+            _emit_usage_error_as_contract(
+                operation,
+                _LAST_USAGE_ERROR[0] or "argument validation failed",
+                _usage_error_mode(args_list),
+            )
+            return status
+    else:
+        args = parser.parse_args(args_list)
 
     if args.dsh_dir is not None:
         home = Path(args.dsh_dir).expanduser()
     else:
         home = _default_dsh_home()
 
+    json_mode = bool(getattr(args, "json", False))
     if args.status and args.yes:
-        print(_tr("confirm_gate"))
+        if json_mode:
+            message = "status does not accept --yes"
+            _json_dump(
+                _json_report(
+                    OPERATION_STATUS,
+                    "execute",
+                    False,
+                    2,
+                    error=message,
+                    blockers=[message],
+                    extra={"dsh_dir": str(home)},
+                )
+            )
+        else:
+            print(_tr("confirm_gate"))
         return 2
     if args.yes and args.file is None and not (args.dry_run or args.uninstall or args.recover or args.status):
         # --yes alone means deploy.
         pass
 
     if args.status:
-        return _cmd_status(home, True)
+        return _cmd_status(home, True, json_mode)
     if args.uninstall:
-        return _cmd_uninstall(home, args.yes)
+        return _cmd_uninstall(home, args.yes, json_mode)
     if args.recover:
-        return _cmd_recover(home, args.yes)
-    return _cmd_deploy(home, args.file, args.name, args.yes)
+        return _cmd_recover(home, args.yes, json_mode)
+    return _cmd_deploy(home, args.file, args.name, args.yes, json_mode)
 
 
 if __name__ == "__main__":
