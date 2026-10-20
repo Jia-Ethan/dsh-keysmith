@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] — 2026-10-20
+
+### Fixed
+
+- The generated `cordis.patch.yml` no longer deletes fields another layer adds
+  to the same row. A patch replaces the targeted entry's `config` object
+  wholesale — the include loader assigns `target[key] = value`, there is no deep
+  merge — so restating only the three fields this tool decides on silently
+  dropped everything else. `@deepseek-ai/dsh-web-app` adds `personaPrefix` and
+  `personaSuffix` to the `system-prompt` row, and the home layer outranks the
+  profile layer, so the loss hit every session: the "powered by the {{model}}
+  model" line and the working-directory line disappeared under a stock dsh web
+  boot, and under Mirasim, which mounts this home into each of its own session
+  homes, it hit every Mirasim session too.
+
+  The body is now read back from `dsh --profile web --dump-default-config` and
+  restated verbatim, with the three fields forced on top. `--dump-default-config`
+  is deliberate: it stops at the bundle layers, so it never reads a patch this
+  tool wrote earlier and cannot fold its own output back in. Only the
+  `system-prompt` block's text is spliced, not parsed as YAML, so nesting,
+  quoting and `!!js` expressions survive.
+
+  When that read is impossible the deploy still happens, on the previous body,
+  and says so: `dsh` off `PATH`, an unusable dump, or no `profiles/web` on disk.
+  The last one is not laziness — composing a missing profile makes dsh create
+  it, and a deploy is not a reason to conjure a profile the user never had. A
+  preview never runs the dump at all: `--dump-default-config` rewrites the
+  profile root on its way through, and a dry run that writes nothing stays that
+  way.
+
 ## [0.2.1] — 2026-10-20
 
 ### Fixed
