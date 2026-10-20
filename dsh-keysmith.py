@@ -631,6 +631,46 @@ def _live_resource_path(home: Path, key: str, entry: Dict[str, Any]) -> Path:
     return home / str(entry.get("path") or RESOURCE_FILENAMES[key])
 
 
+def _plan_backup(
+    home: Path,
+    key: str,
+    name: str,
+    manifest: Optional[Dict[str, Any]],
+    live_now: Optional[Dict[str, Any]],
+    ts: str,
+) -> Tuple[Optional[str], bool]:
+    """Decide which backup a deploy records, and whether it has to write it.
+
+    Returns ``(backup_name, must_write)``.
+
+    Redeploying over our own output must not adopt that output as the user's
+    original — the first deploy's backup is the only copy uninstall can restore.
+    So when the live file is still byte-identical to what we last wrote, the
+    previous manifest's answer is kept verbatim:
+
+    * it recorded a backup → reuse that name, write nothing (the file still
+      holds the user's original)
+    * it recorded no backup → the file did not exist before our first deploy, so
+      this deploy also records none and uninstall will delete it
+
+    A backup is only created (``must_write``) when the live file is genuinely
+    someone else's content: no previous manifest, or the live bytes drifted from
+    what we wrote. A lost backup file falls through to the same path, which
+    preserves something rather than letting uninstall delete the file.
+    """
+    if manifest is not None and live_now is not None:
+        entry = manifest.get(key) or {}
+        if _fingerprints_match(live_now, entry.get("after")):
+            previous = entry.get("backup")
+            if previous and (home / str(previous)).exists():
+                return str(previous), False
+            if not previous:
+                return None, False
+    if live_now is None:
+        return None, False
+    return f"{name}.bak_{ts}", True
+
+
 def _journal_resource_path(home: Path, key: str, info: Dict[str, Any]) -> Path:
     """Resolve a journal resource path.
 
@@ -950,8 +990,13 @@ def _json_cmd_deploy(home: Path, file_arg: Optional[str], name: str, yes: bool) 
     patch_path = home / PATCH_FILENAME
     agents_before = _fingerprint(agents_path)
     patch_before = _fingerprint(patch_path)
-    agents_backup: Optional[str] = f"{AGENTS_FILENAME}.bak_{ts}" if agents_before is not None else None
-    patch_backup: Optional[str] = f"{PATCH_FILENAME}.bak_{ts}" if patch_before is not None else None
+    previous_manifest = _load_manifest(home)
+    agents_backup, agents_backup_write = _plan_backup(
+        home, RESOURCE_AGENTS, AGENTS_FILENAME, previous_manifest, agents_before, ts
+    )
+    patch_backup, patch_backup_write = _plan_backup(
+        home, RESOURCE_PATCH, PATCH_FILENAME, previous_manifest, patch_before, ts
+    )
     adapter_backup: Optional[str] = f"adapter-index.js.bak_{ts}" if adapter_state == ADAPTER_PRISTINE else None
     adapter_symlink_view = _adapter_symlink_path(home)
     resources = {
@@ -984,9 +1029,9 @@ def _json_cmd_deploy(home: Path, file_arg: Optional[str], name: str, yes: bool) 
         _write_journal(txn, journal)
 
     set_phase(PHASE_PREPARED)
-    if agents_backup is not None:
+    if agents_backup is not None and agents_backup_write:
         _atomic_write(home / agents_backup, resources[RESOURCE_AGENTS]["snapshot"])
-    if patch_backup is not None:
+    if patch_backup is not None and patch_backup_write:
         _atomic_write(home / patch_backup, resources[RESOURCE_PATCH]["snapshot"])
     if adapter_backup is not None:
         _atomic_write(home / adapter_backup, resources[RESOURCE_ADAPTER]["snapshot"])
@@ -1427,13 +1472,14 @@ def _cmd_deploy(home: Path, file_arg: Optional[str], name: str, yes: bool, json_
     tid = _new_transaction_id()
     now = datetime.now(timezone.utc).isoformat()
     ts = _timestamp()
-    agents_backup: Optional[str] = None
-    patch_backup: Optional[str] = None
+    previous_manifest = _load_manifest(home)
+    agents_backup, agents_backup_write = _plan_backup(
+        home, RESOURCE_AGENTS, AGENTS_FILENAME, previous_manifest, agents_before, ts
+    )
+    patch_backup, patch_backup_write = _plan_backup(
+        home, RESOURCE_PATCH, PATCH_FILENAME, previous_manifest, patch_before, ts
+    )
     adapter_backup: Optional[str] = None
-    if agents_before is not None:
-        agents_backup = f"{AGENTS_FILENAME}.bak_{ts}"
-    if patch_before is not None:
-        patch_backup = f"{PATCH_FILENAME}.bak_{ts}"
     if adapter_state == ADAPTER_PRISTINE:
         adapter_backup = "adapter-index.js.bak_{}".format(ts)
 
@@ -1476,9 +1522,9 @@ def _cmd_deploy(home: Path, file_arg: Optional[str], name: str, yes: bool, json_
     set_phase(PHASE_PREPARED)
 
     # Backups.
-    if agents_backup is not None:
+    if agents_backup is not None and agents_backup_write:
         _atomic_write(home / agents_backup, resources[RESOURCE_AGENTS]["snapshot"])
-    if patch_backup is not None:
+    if patch_backup is not None and patch_backup_write:
         _atomic_write(home / patch_backup, resources[RESOURCE_PATCH]["snapshot"])
     if adapter_backup is not None:
         _atomic_write(home / adapter_backup, resources[RESOURCE_ADAPTER]["snapshot"])

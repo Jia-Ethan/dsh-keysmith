@@ -227,3 +227,54 @@ def test_json_redeploy_clears_drift_without_recover(dsh_home):
     assert run_cli(["--dsh-dir", str(dsh_home), "--json", "--yes"]).returncode == 0
     assert load_json(run_cli(["--dsh-dir", str(dsh_home), "--status", "--json"]))["state"] == "active"
     assert run_cli(["--dsh-dir", str(dsh_home), "--uninstall", "--yes", "--json"]).returncode == 0
+
+
+# ─── Backup ownership across redeploys ──────────────────────────────────────
+#
+# Redeploy is the documented way out of drift, so it has to keep the user's
+# original intact. Adopting our own output as "what the user had" would make
+# uninstall restore the prompt we wrote instead of the file we replaced.
+
+
+def test_redeploy_keeps_the_users_original_for_uninstall(dsh_home):
+    original = "MY OWN WORDS\n"
+    (dsh_home / "AGENTS.md").write_text(original)
+
+    assert run_cli(["--dsh-dir", str(dsh_home), "--json", "--yes"]).returncode == 0
+    assert run_cli(["--dsh-dir", str(dsh_home), "--json", "--yes"]).returncode == 0
+
+    backups = sorted(dsh_home.glob("AGENTS.md.bak_*"))
+    assert len(backups) == 1, [b.name for b in backups]
+    assert backups[0].read_text() == original
+
+    assert run_cli(["--dsh-dir", str(dsh_home), "--uninstall", "--yes", "--json"]).returncode == 0
+    assert (dsh_home / "AGENTS.md").read_text() == original
+
+
+def test_redeploy_of_a_created_file_leaves_nothing_behind(dsh_home):
+    """Nothing existed before our first deploy, so uninstall must remove it."""
+    run_cli(["--dsh-dir", str(dsh_home), "--json", "--yes"])
+    run_cli(["--dsh-dir", str(dsh_home), "--json", "--yes"])
+    assert not list(dsh_home.glob("AGENTS.md.bak_*"))
+
+    assert run_cli(["--dsh-dir", str(dsh_home), "--uninstall", "--yes", "--json"]).returncode == 0
+    assert not (dsh_home / "AGENTS.md").exists()
+
+
+def test_redeploy_adopts_content_the_user_edited_in_between(dsh_home):
+    """Once the user has edited our output, that edit IS their original."""
+    (dsh_home / "AGENTS.md").write_text("ORIGINAL\n")
+    run_cli(["--dsh-dir", str(dsh_home), "--json", "--yes"])
+    (dsh_home / "AGENTS.md").write_text("USER EDITED\n")
+    run_cli(["--dsh-dir", str(dsh_home), "--json", "--yes"])
+
+    assert run_cli(["--dsh-dir", str(dsh_home), "--uninstall", "--yes", "--json"]).returncode == 0
+    assert (dsh_home / "AGENTS.md").read_text() == "USER EDITED\n"
+
+
+def test_text_path_matches_json_backup_behaviour(dsh_home):
+    (dsh_home / "AGENTS.md").write_text("TEXT ORIGINAL\n")
+    assert run_cli(["--dsh-dir", str(dsh_home), "--yes"]).returncode == 0
+    assert run_cli(["--dsh-dir", str(dsh_home), "--yes"]).returncode == 0
+    assert run_cli(["--dsh-dir", str(dsh_home), "--uninstall", "--yes"]).returncode == 0
+    assert (dsh_home / "AGENTS.md").read_text() == "TEXT ORIGINAL\n"
