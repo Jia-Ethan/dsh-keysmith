@@ -30,6 +30,7 @@ import json
 import locale
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -138,6 +139,49 @@ BUILTIN_PATCH_YML = """\
     includeRuntimeContext: true
     persona: ''
 """
+
+# ─── Composed patch body (restated from what dsh itself boots) ───────────────
+# A patch layer replaces the targeted row's `config` object wholesale — the
+# include loader does `target[key] = value`, there is no deep merge. So a body
+# that names only the fields this tool cares about silently deletes the rest.
+# `@deepseek-ai/dsh-web-app` is what makes that bite: it adds `personaPrefix`
+# and `personaSuffix` to the same row, and the home layer outranks the profile
+# layer, so the clobbering applied to every session (Mirasim among them).
+#
+# The fix is to ask dsh what it composes and restate that, with our three
+# fields forced on top. `--dump-default-config` is the right baseline: it stops
+# at the bundle layers, so it never reads back a patch we wrote ourselves.
+DUMP_PROFILE = "web"
+DUMP_TIMEOUT_SECONDS = 20
+
+#: Forced over the composed row. Everything else is taken from the dump.
+FORCED_CONFIG_FIELDS = (
+    ("includeHarnessIdentity", "false"),
+    ("includeRuntimeContext", "true"),
+    ("persona", "''"),
+)
+
+PATCH_HEADER_DUMPED = """\
+# Managed by dsh-keysmith. Id-targeted patch over the `system-prompt` row:
+# suppress the fixed harness identity, keep runtime context snapshots, and
+# leave the persona to the deployed AGENTS.md instruction layer.
+# A patch replaces the targeted row's whole config, so the fields below were
+# read back from `dsh --profile {profile} --dump-default-config` and restated
+# verbatim. Bundle-layer values are preserved. A value set in a profile's own
+# cordis.patch.yml is not: that layer sits below this one, so it cannot show
+# through the replacement. Remove this file (or dsh-keysmith --uninstall) to
+# restore.
+"""
+
+PATCH_BODY_WARNING_NO_DSH = (
+    "dsh is not on PATH; the patch body restates only the base fields, so a field an app "
+    "layer adds to the system-prompt row (for example dsh-web-app's personaPrefix and "
+    "personaSuffix) is dropped"
+)
+PATCH_BODY_WARNING_UNREADABLE = (
+    "could not read the composed `system-prompt` row from `dsh --profile {profile} "
+    "--dump-default-config`; the patch body restates only the base fields"
+)
 
 # ─── Adapter hot-fix (dsh-llm-deepseek empty-name clobbering) ────────────────
 # Target: <dsh-home>/profiles/node_modules/@deepseek-ai/dsh-llm-deepseek/lib/index.js
@@ -868,6 +912,105 @@ def _json_cmd_status(home: Path) -> int:
     return exit_status
 
 
+def _system_prompt_config_lines(dump_text: str) -> Optional[List[str]]:
+    """The `config:` children dsh composes for the `system-prompt` row.
+
+    Reads the text dsh prints instead of parsing YAML: the block is spliced back
+    verbatim, so nesting, quoting and `!!js` expressions survive untouched. Only
+    the top-level entry is considered — an `- id: system-prompt` nested inside a
+    group belongs to a different row and is left alone.
+    """
+    rows = dump_text.splitlines()
+    start: Optional[int] = None
+    for index, row in enumerate(rows):
+        # No leading space: only the top-level row, never one nested in a group.
+        if row.rstrip() == "- id: system-prompt":
+            start = index
+            break
+    if start is None:
+        return None
+    body: List[str] = []
+    inside = False
+    for row in rows[start + 1 :]:
+        stripped = row.strip()
+        # The next top-level entry (or layer header) ends the row.
+        if stripped.startswith("- id:") and not row.startswith(" "):
+            break
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not inside:
+            if row.rstrip() == "  config:":
+                inside = True
+            continue
+        # Children are indented under `config:`; a sibling key ends the block.
+        if not row.startswith("    "):
+            break
+        body.append(row)
+    return body or None
+
+
+def _merge_config_lines(body: List[str]) -> List[str]:
+    """Our three fields first, then the composed rows they did not already name."""
+    forced_keys = tuple(key for key, _value in FORCED_CONFIG_FIELDS)
+    kept = [
+        row
+        for row in body
+        if not any(row.startswith("    {}:".format(key)) for key in forced_keys)
+    ]
+    forced = ["    {}: {}".format(key, value) for key, value in FORCED_CONFIG_FIELDS]
+    return forced + kept
+
+
+def _dump_default_config(binary: str, home: Path) -> Optional[str]:
+    """dsh's own composition of the profile, stopping at the bundle layers."""
+    env = dict(os.environ)
+    env["DSH_HOME"] = str(home)
+    try:
+        completed = subprocess.run(
+            [binary, "--profile", DUMP_PROFILE, "--dump-default-config"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=DUMP_TIMEOUT_SECONDS,
+            env=env,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0 or not completed.stdout.strip():
+        return None
+    return completed.stdout
+
+
+def _render_patch_body(home: Path) -> Tuple[bytes, List[str]]:
+    """The patch file to write, plus the reasons any part of it could not be read.
+
+    Only called on the execute path: `--dump-default-config` lets dsh rewrite the
+    profile root (`cordis.yml`) on the way, so running it during a preview would
+    break the "a dry run writes nothing" promise. Runs only when the profile is
+    already on disk, because composing a missing one would create it.
+    """
+    warnings: List[str] = []
+    if not (home / "profiles" / DUMP_PROFILE).is_dir():
+        # Nothing on disk to read back, and the shipped default is what a fresh
+        # profile would compose to anyway.
+        return BUILTIN_PATCH_YML.encode("utf-8"), warnings
+    binary = shutil.which("dsh")
+    if binary is None:
+        warnings.append(PATCH_BODY_WARNING_NO_DSH)
+        return BUILTIN_PATCH_YML.encode("utf-8"), warnings
+    dump = _dump_default_config(binary, home)
+    body = _system_prompt_config_lines(dump) if dump is not None else None
+    if body is None:
+        warnings.append(PATCH_BODY_WARNING_UNREADABLE.format(profile=DUMP_PROFILE))
+        return BUILTIN_PATCH_YML.encode("utf-8"), warnings
+    text = PATCH_HEADER_DUMPED.format(profile=DUMP_PROFILE) + (
+        "- id: system-prompt\n"
+        "  name: '@deepseek-ai/dsh-system-prompt'\n"
+        "  config:\n" + "\n".join(_merge_config_lines(body)) + "\n"
+    )
+    return text.encode("utf-8"), warnings
+
+
 def _collect_deploy_plan(
     home: Path, file_arg: Optional[str], name: str
 ) -> Tuple[int, Dict[str, Any], Optional[bytes], str, Optional[bytes], Optional[Path]]:
@@ -1038,7 +1181,9 @@ def _json_cmd_deploy(home: Path, file_arg: Optional[str], name: str, yes: bool) 
     set_phase(PHASE_AGENTS_INTENT)
     _atomic_write(agents_path, prompt_bytes)
     set_phase(PHASE_PATCH_INTENT)
-    _atomic_write(patch_path, BUILTIN_PATCH_YML.encode("utf-8"))
+    patch_bytes, patch_body_warnings = _render_patch_body(home)
+    report.setdefault("warnings", []).extend(patch_body_warnings)
+    _atomic_write(patch_path, patch_bytes)
     set_phase(PHASE_ADAPTER_INTENT)
     if adapter_state == ADAPTER_PRISTINE and adapter_patched_bytes is not None:
         assert adapter_real is not None
@@ -1535,7 +1680,12 @@ def _cmd_deploy(home: Path, file_arg: Optional[str], name: str, yes: bool, json_
 
     # Write cordis.patch.yml.
     set_phase(PHASE_PATCH_INTENT)
-    _atomic_write(patch_path, BUILTIN_PATCH_YML.encode("utf-8"))
+    patch_bytes, patch_body_warnings = _render_patch_body(home)
+    # English by contract: the same sentences the JSON envelope carries. The text
+    # path has no warning channel of its own, so they go out as plain lines.
+    for warning in patch_body_warnings:
+        print("warning: {}".format(warning))
+    _atomic_write(patch_path, patch_bytes)
 
     # Apply the adapter hot-fix (pristine only; already-patched is a no-op).
     set_phase(PHASE_ADAPTER_INTENT)
