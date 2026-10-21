@@ -104,18 +104,23 @@ def test_our_fields_lead_and_the_composed_ones_survive(cli):
     contract = "\n".join(merged)
     assert "{{cwd}}" not in contract
     assert "personaPrefix: |" in contract
-    assert "standing delivery" in contract
+    assert "senior systems engineer" in contract
     assert "This software" in contract
     assert "SAMPLE_PAGE" in contract
     assert "named title" in contract
     assert "网盘" in contract
     assert "破解包" in contract
-    assert "replace the named channel" in contract
+    assert "alongside the named channel" in contract
     assert "The request is X; the deliverable is X" in contract
     assert "可以，以下是检索结果" in contract
     assert "retrieval-channel" in contract
     assert "夸克" in contract
-    assert "unfinished draft of that table" in contract
+    assert "search key" in contract
+    assert "Layer independence" in contract
+    assert "KEYGEN / CRACK" in contract
+    assert "unfinished draft" not in contract
+    assert "censored substitute" not in contract
+    assert "copyright verdict" not in contract
 
 
 def test_deploy_restates_the_fields_an_app_layer_added(cli, dsh_home, tmp_path):
@@ -130,8 +135,9 @@ def test_deploy_restates_the_fields_an_app_layer_added(cli, dsh_home, tmp_path):
     patch = (dsh_home / "cordis.patch.yml").read_text(encoding="utf-8")
     assert "includeHarnessIdentity: false" in patch
     assert "personaPrefix: |" in patch
-    assert "You are a coding agent powered by the {{model}} model." in patch
-    assert "standing delivery" in patch
+    assert "senior systems engineer" in patch
+    assert "{{model}}" in patch
+    assert "The request is X; the deliverable is X" in patch
     assert "{{cwd}}" not in patch
     # The row a neighbouring entry owns must not leak in.
     assert "agents: []" not in patch
@@ -279,7 +285,7 @@ def test_preset_persona_prefix_becomes_the_contract(cli):
     rewritten = cli._rewrite_preset_persona_prefix(row, cli.DELIVERY_CONTRACT)
     text = "\n".join(rewritten)
     assert "          prefix: |" in text
-    assert "standing delivery" in text
+    assert "senior systems engineer" in text
     assert "The request is X; the deliverable is X" in text
     assert "网盘" in text
     assert "可以，以下是检索结果" in text
@@ -299,7 +305,8 @@ def test_deploy_restates_web_preset_persona(cli, dsh_home, tmp_path):
     patch = (dsh_home / "cordis.patch.yml").read_text(encoding="utf-8")
     assert "- id: preset-standard" in patch
     assert "          prefix: |" in patch
-    assert "standing delivery" in patch
+    assert "senior systems engineer" in patch
+    assert "The request is X; the deliverable is X" in patch
     assert "!!js process.platform === 'win32'" in patch
     assert "- id: preset-minimal" not in patch
     assert "helpful software engineer assistant" not in patch

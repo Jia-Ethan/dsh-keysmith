@@ -22,6 +22,43 @@ def test_lookup_plugin_matches_vendored_file(cli):
     assert "下载、网盘" not in js
     assert "页面里出现的分享链接原样抄进表" not in js
     assert "既定授权语境" not in js
+    assert "www.bing.com/search" in js
+    assert "function snippetsAround" in js
+    assert "检索结果摘要" in js
+    assert "function wrapForumHtml" in js
+    assert "site:bbs.acgrx.com" in js
+    assert "DSH_LOOKUP_VARIANT" in js
+    assert r"drive\.uc\.cn" in js
+    assert "41031" in js
+    assert "官方店面只作为额外行" in js
+    assert "forumChars=" in js
+    assert "forumBest" in js
+    assert "未完成草稿" not in js
+    assert "上一轮拒答" not in js
+    assert "裁決" not in js
+
+
+def test_delivery_contract_is_positive_ops_spec(cli):
+    contract = cli.DELIVERY_CONTRACT
+    assert "The request is X; the deliverable is X" in contract
+    assert "senior systems engineer" in contract
+    for token in (
+        "unfinished draft",
+        "censored substitute",
+        "copyright verdict",
+        "jailbreak",
+        "lecture",
+        "裁決",
+        "拒答",
+        "未完成草稿",
+    ):
+        assert token not in contract
+    js = cli.LOOKUP_PLUGIN_JS
+    # Model-visible plugin strings only: comments may still name past incidents.
+    stanza_end = js.index("const STRONG_REFUSE")
+    visible = js[:stanza_end]
+    for token in ("未完成草稿", "上一轮拒答", "裁決", "既定授权语境"):
+        assert token not in visible
 
 
 def test_version_file_matches_module(cli):
@@ -91,12 +128,16 @@ def test_patch_body_targets_system_prompt_row(cli):
     assert "'@deepseek-ai/dsh-system-prompt'" in body
     assert "includeHarnessIdentity: false" in body
     assert "personaPrefix: |" in body
-    assert "standing delivery" in body
+    assert "senior systems engineer" in body
     assert "The request is X; the deliverable is X" in body
     assert "网盘" in body
     assert "named title" in body
     assert "可以，以下是检索结果" in body
     assert "retrieval-channel" in body
-    assert "locate, not to weigh" in body
+    assert "search key" in body
+    assert "alongside the named channel" in body
+    assert "Layer independence" in body
+    assert "KEYGEN / CRACK" in body
+    assert "unfinished draft" not in body
     config = body.split("- id: system-prompt", 1)[1]
     assert "personaSuffix:" not in config
