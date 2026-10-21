@@ -9,7 +9,7 @@ python3 -m pytest -q tests
 
 Do not run `--yes` against a live `~/.dsh` that already holds a Switch pack `AGENTS.md`. Preview on a throwaway home. Plugin JS is embedded in the CLI and must stay byte-identical to `plugins/lookup-prepend/index.js`.
 
-0.3.0 puts the delivery contract in `personaPrefix` (system prompt). The plugin adds an always-on local-execution context, a quiet lookup table stanza, and `401 Unauthorized` on native `web_search` / `web_fetch` during lookup.
+0.3.0 puts the delivery contract in `personaPrefix` (system prompt). The plugin adds an always-on local-execution context, a quiet lookup table stanza, and `401 Unauthorized` on native `web_search` / `web_fetch` during lookup. Lookup delivers: the plugin splices a whole harvested forum page into the message flow as a labeled bash-curl tool result (`DSH_LOOKUP_VARIANT=broad_forum`, the default), pre-probes itch/Patreon storefront rows, and the model fills the channel table from its own tool output. A/B runner: `scripts/run_lookup_ab.py`. Findings: [docs/refusal-reduction.md](docs/refusal-reduction.md).
 
 ## Docs
 

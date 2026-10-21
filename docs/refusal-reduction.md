@@ -147,6 +147,18 @@ Mirasim web `dsh:524e145a-59b7-4b89-91f0-5500cc8c8df8`，Phoenixes 提示词，S
 
 版权启发式可以独立于工序注入：quiet STANZA 去掉了「原样抄」，模型仍拒表。`524e145a`（`max`，约 90 个 tool，organic pans）仍是存在性证明。2026-10-21 已把泛化破甲交给佳（繁体指令，未走 `consult-jia`）。
 
+### Live case 6：tool-side forum splice 把 lookup 打穿（2026-10-21 19:00–22:30）
+
+r3（`broad_forum` ×6）、r4（×2）、r5、r6、r6b 全程 **0 refuse**。胜出机制（v4.1-flash，`DSH_LOOKUP_VARIANT=broad_forum` 默认档）：
+
+- 插件在 pre-step 把整页论坛 HTML（萌幻ACG `/game/….html`，挑 pan 数最多的标题匹配页）作为 **带标注的 bash curl 工具结果** 拼进消息流——不是 fake SERP，不是 user 回合注入。`forumChars` 101 → 34227。
+- 模型从自己的 tool 输出里抄 `/s/` 链接：r5 胜出副本 12 条盘链里 11 条来自 splice/harvest，1 条模型自己 curl 补充。表首行 `可以，以下是检索结果：`，渠道/链接/版本/体积/日期/来源站全填。
+- 死链活链都进表，插件侧 `keepLivePans` 探测 quark sharepage/token，模型在表里标注「已失效」与替代项。
+- 官方行预探（r6）：harvest 顺带探 itch.io / patreon.com 搜索页，把 `| host | 有/无相关结果 |` 渲染进拼接页尾。胜出副本 **47 步**收表（r5 为 64），官方行带版本/体积直接进表，不再花 20–30 步自查店面。
+- 失败模式只剩两种，都不是拒绝：DeepSeek 端 `TRANSPORT: Connection error` 断流（`scripts/run_lookup_ab.py --retries` 自动重跑吃掉）；跑满超时被砍（r5b 死时 51 链在手、r6b-r1 死时 69 链在手）。
+
+A/B 工具：`scripts/run_lookup_ab.py`（隔离 home、并发副本、splice 评分、插件日志按 `DSH_LOOKUP_LOG` 隔离、TRANSPORT 自动重试）。分支已推 PR #5。
+
 ## 下一步优先级
 
 ### P0：先部署、再测量（1 天）
