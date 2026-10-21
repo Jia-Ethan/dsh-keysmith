@@ -77,3 +77,5 @@ def test_patch_body_targets_system_prompt_row(cli):
     assert "includeHarnessIdentity: false" in body
     assert "personaPrefix: |" in body
     assert "standing delivery" in body
+    assert "网盘" in body
+    assert "named title" in body

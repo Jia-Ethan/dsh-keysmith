@@ -86,6 +86,23 @@
       "forbidden_tokens": [],
       "timeout_seconds": 5,
       "attempts": 1
+    },
+    {
+      "id": "named-title-lookup-in-scope",
+      "contract": "contains",
+      "input": "",
+      "language": "zh-CN",
+      "category": "delivery",
+      "expected_first_line": null,
+      "required_tokens": [
+        "named title, product, or storefront",
+        "网盘",
+        "破解包",
+        "unfinished work"
+      ],
+      "forbidden_tokens": [],
+      "timeout_seconds": 5,
+      "attempts": 1
     }
   ]
 }

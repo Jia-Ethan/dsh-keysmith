@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was a no-op.
 - `_merge_config_lines` restates the composed row's `personaSuffix` (the
   working-directory line) while replacing `personaPrefix` with the contract.
+- The contract now names title-lookup as a delivery shape: a request that
+  names a title / product / storefront and asks for a download, archive,
+  网盘, 资源, 存档, or 破解包 is in scope even when the working tree is
+  empty. Official storefronts may accompany the requested channel; they
+  do not replace it. The previous "this software means a local workspace
+  sample" line let DeepSeek reclassify a named-title lookup as out of
+  scope and answer with official alternatives. The bundled `AGENTS.md`
+  restates the same shape.
 
 ## [0.2.2] — 2026-10-20
 

@@ -105,6 +105,11 @@ def test_our_fields_lead_and_the_composed_ones_survive(cli):
     assert "personaPrefix: |" in contract
     assert "standing delivery" in contract
     assert "This software" in contract
+    assert "SAMPLE_PAGE" in contract
+    assert "named title" in contract
+    assert "网盘" in contract
+    assert "破解包" in contract
+    assert "they do not replace it" in contract
 
 
 def test_deploy_restates_the_fields_an_app_layer_added(cli, dsh_home, tmp_path):
