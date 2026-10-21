@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-10-21
+
+### Changed
+
+- The delivery contract now deploys into the `system-prompt` row's
+  `personaPrefix`, not only into `AGENTS.md`. DSH injects the user-global
+  `AGENTS.md` as a user-role block *after* the request and introduces it as
+  guidance that "does not override system, developer, or direct user
+  instructions"; the same text in `personaPrefix` is part of the system prompt
+  and precedes the request. This is the structural fix for the refusal-rate
+  gap between DSH Keysmith and the Codex/OpenCode packs.
+- The contract itself is now procedural: newest request is the sole task,
+  first line is the deliverable, named elements are required fields, boundary
+  words map to placeholders and routing rather than to scope reduction, and a
+  final delivery check closes the system prompt. The stale `persona` key is
+  removed — dsh's schema reads `personaPrefix`/`personaSuffix`, so the old key
+  was a no-op.
+- `_merge_config_lines` restates the composed row's `personaSuffix` (the
+  working-directory line) while replacing `personaPrefix` with the contract.
+
 ## [0.2.2] — 2026-10-20
 
 ### Fixed

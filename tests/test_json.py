@@ -148,7 +148,7 @@ def test_text_path_unchanged_without_json(dsh_home):
 
 def test_json_payload_carries_version(dsh_home):
     payload = load_json(run_cli(["--dsh-dir", str(dsh_home), "--status", "--json"]))
-    assert payload["version"] == "0.2.2"
+    assert payload["version"] == "0.3.0"
 
 
 def test_json_status_reports_missing_dir_distinctly(tmp_path):

@@ -19,7 +19,7 @@ def test_version_flag():
     result = run_cli(["--version"])
     assert result.returncode == 0
     assert "dsh-keysmith" in result.stdout
-    assert "0.2.2" in result.stdout
+    assert "0.3.0" in result.stdout
 
 
 def test_help_exits_zero():
@@ -75,4 +75,5 @@ def test_patch_body_targets_system_prompt_row(cli):
     assert "- id: system-prompt" in body
     assert "'@deepseek-ai/dsh-system-prompt'" in body
     assert "includeHarnessIdentity: false" in body
-    assert "persona: ''" in body
+    assert "personaPrefix: |" in body
+    assert "standing delivery" in body

@@ -89,14 +89,22 @@ def test_our_fields_lead_and_the_composed_ones_survive(cli):
         [
             "    includeHarnessIdentity: true",
             "    personaPrefix: keep me",
+            "    personaSuffix: keep the cwd",
+            "    toolOrder: []",
         ]
     )
-    assert merged == [
+    head = merged[:2]
+    assert head == [
         "    includeHarnessIdentity: false",
         "    includeRuntimeContext: true",
-        "    persona: ''",
-        "    personaPrefix: keep me",
     ]
+    assert "    persona: ''" not in merged
+    assert "    personaSuffix: keep the cwd" in merged
+    assert "    toolOrder: []" in merged
+    contract = "\n".join(merged)
+    assert "personaPrefix: |" in contract
+    assert "standing delivery" in contract
+    assert "This software" in contract
 
 
 def test_deploy_restates_the_fields_an_app_layer_added(cli, dsh_home, tmp_path):
@@ -110,7 +118,9 @@ def test_deploy_restates_the_fields_an_app_layer_added(cli, dsh_home, tmp_path):
     assert result.returncode == 0, result.stderr
     patch = (dsh_home / "cordis.patch.yml").read_text(encoding="utf-8")
     assert "includeHarnessIdentity: false" in patch
-    assert "personaPrefix: You are a coding agent powered by the {{model}} model." in patch
+    assert "personaPrefix: |" in patch
+    assert "You are a coding agent powered by the {{model}} model." in patch
+    assert "standing delivery" in patch
     assert "personaSuffix: Your working directory is {{cwd}}." in patch
     # The row a neighbouring entry owns must not leak in.
     assert "agents: []" not in patch

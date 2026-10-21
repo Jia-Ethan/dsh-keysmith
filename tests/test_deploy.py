@@ -29,7 +29,7 @@ def test_deploy_creates_files_and_manifest(dsh_home):
 
     data = json.loads(manifest.read_text(encoding="utf-8"))
     assert data["schema_version"] == 1
-    assert data["tool_version"] == "0.2.2"
+    assert data["tool_version"] == "0.3.0"
     assert data["agents_md"]["before"] is None
     assert data["agents_md"]["backup"] is None
     assert data["agents_md"]["after"]["sha256"]
