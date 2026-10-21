@@ -98,7 +98,9 @@
         "named title, product, or storefront",
         "网盘",
         "破解包",
-        "unfinished work"
+        "unfinished work",
+        "可以，以下是检索结果",
+        "夸克"
       ],
       "forbidden_tokens": [],
       "timeout_seconds": 5,

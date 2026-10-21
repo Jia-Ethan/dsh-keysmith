@@ -21,11 +21,18 @@ def test_deploy_creates_files_and_manifest(dsh_home):
     agents = dsh_home / "AGENTS.md"
     patch = dsh_home / "cordis.patch.yml"
     manifest = dsh_home / MANIFEST
+    plugin = dsh_home / "keysmith-plugins" / "lookup-prepend" / "index.js"
     assert agents.is_file()
     assert patch.is_file()
+    assert plugin.is_file()
     assert manifest.is_file()
     assert agents.read_text(encoding="utf-8").startswith("You are a senior engineer")
-    assert "includeHarnessIdentity: false" in patch.read_text(encoding="utf-8")
+    patch_text = patch.read_text(encoding="utf-8")
+    assert "includeHarnessIdentity: false" in patch_text
+    assert "- insert:" in patch_text
+    assert "id: dsh-lookup-prepend" in patch_text
+    assert str(plugin.resolve()) in patch_text
+    assert plugin.read_text(encoding="utf-8").startswith("/**")
 
     data = json.loads(manifest.read_text(encoding="utf-8"))
     assert data["schema_version"] == 1
@@ -34,6 +41,9 @@ def test_deploy_creates_files_and_manifest(dsh_home):
     assert data["agents_md"]["backup"] is None
     assert data["agents_md"]["after"]["sha256"]
     assert data["cordis_patch"]["before"] is None
+    assert data["lookup_plugin"]["before"] is None
+    assert data["lookup_plugin"]["backup"] is None
+    assert data["lookup_plugin"]["path"] == "keysmith-plugins/lookup-prepend/index.js"
     # No adapter under a bare home: the manifest must not claim one.
     assert ADAPTER_REL not in data
     assert set(data.keys()) == {
@@ -42,6 +52,7 @@ def test_deploy_creates_files_and_manifest(dsh_home):
         "deployment_id",
         "created_at",
         "agents_md",
+        "lookup_plugin",
         "cordis_patch",
         "previous_manifest",
     }
@@ -87,6 +98,7 @@ def test_uninstall_deletes_created_files(dsh_home):
     ).returncode == 0
     assert not (dsh_home / "AGENTS.md").exists()
     assert not (dsh_home / "cordis.patch.yml").exists()
+    assert not (dsh_home / "keysmith-plugins" / "lookup-prepend" / "index.js").exists()
     assert not (dsh_home / MANIFEST).exists()
 
 
@@ -195,5 +207,22 @@ def test_deploy_without_adapter_dir_is_backward_compatible(dsh_home):
     """A home with no profiles/node_modules still deploys AGENTS.md."""
     assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
     assert (dsh_home / "AGENTS.md").is_file()
+    assert (dsh_home / "keysmith-plugins" / "lookup-prepend" / "index.js").is_file()
     manifest = json.loads((dsh_home / MANIFEST).read_text(encoding="utf-8"))
     assert "adapter_patch" not in manifest
+    assert "lookup_plugin" in manifest
+
+
+def test_deploy_backs_up_existing_plugin(dsh_home):
+    plugin = dsh_home / "keysmith-plugins" / "lookup-prepend" / "index.js"
+    plugin.parent.mkdir(parents=True)
+    plugin.write_text("user plugin\n", encoding="utf-8")
+    assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
+    backups = sorted(dsh_home.glob("lookup-prepend-index.js.bak_*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "user plugin\n"
+    assert plugin.read_text(encoding="utf-8").startswith("/**")
+    assert run_cli(
+        ["--dsh-dir", str(dsh_home), "--uninstall", "--yes", "--lang", "en"]
+    ).returncode == 0
+    assert plugin.read_text(encoding="utf-8") == "user plugin\n"

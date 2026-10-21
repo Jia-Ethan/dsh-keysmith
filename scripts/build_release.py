@@ -45,6 +45,7 @@ INCLUDED_PATHS = [
     ".gitignore",
     ".gitattributes",
     "examples/",
+    "plugins/",
     "scripts/",
     "docs/",
     "tests/",

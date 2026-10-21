@@ -13,16 +13,19 @@ Do not open a public issue for security reports.
 
 ## Scope
 
-`dsh-keysmith` modifies exactly two files inside the DeepSeek Harness home
-(`~/.dsh/AGENTS.md` and `~/.dsh/cordis.patch.yml`) plus its own ownership
+`dsh-keysmith` modifies three files inside the DeepSeek Harness home
+(`~/.dsh/AGENTS.md`, `~/.dsh/cordis.patch.yml`, and
+`~/.dsh/keysmith-plugins/lookup-prepend/index.js`) plus its own ownership
 manifest, transaction journals, backups, and cleanup markers — all inside that
-same home directory. It does not patch binaries, intercept network traffic,
-store credentials, or touch the DSH installation under the npm cache.
+same home directory. An optional fourth write patches the `dsh-llm-deepseek`
+adapter under `profiles/node_modules` when that file is present and matches
+the known snippet. It does not intercept network traffic, store credentials,
+or otherwise touch the DSH installation under the npm cache.
 
-Changing `~/.dsh/AGENTS.md` and the home patch layer changes **global behavior
-for every future DSH session** under that home — it is not a per-project
-switch. The deployed prompt governs the agent the same way any
-user-authored `AGENTS.md` would.
+Changing `~/.dsh/AGENTS.md`, the home patch layer, and the lookup plugin
+changes **global behavior for every future DSH session** under that home —
+it is not a per-project switch. The deployed prompt governs the agent the
+same way any user-authored `AGENTS.md` would.
 
 ## Supported versions
 

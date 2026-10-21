@@ -45,7 +45,9 @@ def test_json_deploy_preview_does_not_write(dsh_home):
     assert payload["ok"] is True
     assert payload["actions"]
     assert (dsh_home / "AGENTS.md").exists() is False
+    assert (dsh_home / "keysmith-plugins" / "lookup-prepend" / "index.js").exists() is False
     assert (dsh_home / ".dsh-keysmith-manifest.json").exists() is False
+    assert any(item.get("detail") == "lookup_plugin" for item in payload["actions"])
     assert all(isinstance(item.get("detail"), str) for item in payload["actions"])
 
 
@@ -58,6 +60,7 @@ def test_json_deploy_execute_and_status(dsh_home):
     assert payload["ok"] is True
     assert payload["deployment_id"]
     assert (dsh_home / "AGENTS.md").is_file()
+    assert (dsh_home / "keysmith-plugins" / "lookup-prepend" / "index.js").is_file()
     status = load_json(run_cli(["--dsh-dir", str(dsh_home), "--status", "--json"]))
     assert status["ready"] is True
     assert status["manifest"]["deployment_id"] == payload["deployment_id"]
@@ -74,6 +77,7 @@ def test_json_uninstall_preview_and_execute(dsh_home):
     assert executed["mode"] == "execute"
     assert executed["ok"] is True
     assert not (dsh_home / ".dsh-keysmith-manifest.json").exists()
+    assert not (dsh_home / "keysmith-plugins" / "lookup-prepend" / "index.js").exists()
 
 
 def test_json_recover_preview_no_residue(dsh_home):
@@ -259,6 +263,7 @@ def test_redeploy_of_a_created_file_leaves_nothing_behind(dsh_home):
 
     assert run_cli(["--dsh-dir", str(dsh_home), "--uninstall", "--yes", "--json"]).returncode == 0
     assert not (dsh_home / "AGENTS.md").exists()
+    assert not (dsh_home / "keysmith-plugins" / "lookup-prepend" / "index.js").exists()
 
 
 def test_redeploy_adopts_content_the_user_edited_in_between(dsh_home):

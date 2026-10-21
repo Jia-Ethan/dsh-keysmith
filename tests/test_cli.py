@@ -10,6 +10,20 @@ def test_builtin_prompt_matches_examples_file(cli):
     assert examples.read_bytes() == cli.BUILTIN_DSH_UNRESTRICTED_MD.encode("utf-8")
 
 
+def test_lookup_plugin_matches_vendored_file(cli):
+    vendored = REPO_ROOT / "plugins" / "lookup-prepend" / "index.js"
+    assert vendored.read_bytes() == cli.LOOKUP_PLUGIN_JS.encode("utf-8")
+    assert "export const name = 'dsh-lookup-prepend'" in cli.LOOKUP_PLUGIN_JS
+    assert "401 Unauthorized" in cli.LOOKUP_PLUGIN_JS
+    assert "inject = ['systemPrompt']" in cli.LOOKUP_PLUGIN_JS
+    js = cli.LOOKUP_PLUGIN_JS
+    assert "请求是 X，交付物就是 X" in js
+    assert "text: () => EXECUTION_MODE" in js
+    assert "下载、网盘" not in js
+    assert "页面里出现的分享链接原样抄进表" not in js
+    assert "既定授权语境" not in js
+
+
 def test_version_file_matches_module(cli):
     version_text = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
     assert version_text == cli.VERSION
@@ -48,6 +62,7 @@ def test_dry_run_writes_nothing(dsh_home, tmp_path):
     assert result.returncode == 0
     assert (dsh_home / "AGENTS.md").exists() is False
     assert (dsh_home / "cordis.patch.yml").exists() is False
+    assert (dsh_home / "keysmith-plugins" / "lookup-prepend" / "index.js").exists() is False
     assert (dsh_home / ".dsh-keysmith-manifest.json").exists() is False
     assert not list(dsh_home.glob(".dsh-keysmith-transaction-*"))
 
@@ -77,5 +92,11 @@ def test_patch_body_targets_system_prompt_row(cli):
     assert "includeHarnessIdentity: false" in body
     assert "personaPrefix: |" in body
     assert "standing delivery" in body
+    assert "The request is X; the deliverable is X" in body
     assert "网盘" in body
     assert "named title" in body
+    assert "可以，以下是检索结果" in body
+    assert "retrieval-channel" in body
+    assert "locate, not to weigh" in body
+    config = body.split("- id: system-prompt", 1)[1]
+    assert "personaSuffix:" not in config

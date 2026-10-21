@@ -6,15 +6,20 @@ design contract.
 
 ## Resources
 
-A deployment owns two files inside the DSH home (`--dsh-dir`, default `~/.dsh`):
+A deployment owns three files inside the DSH home (`--dsh-dir`, default `~/.dsh`),
+plus an optional adapter hot-fix:
 
 | Resource | Purpose | Loader |
 | --- | --- | --- |
 | `AGENTS.md` | User-global instruction file loaded by `dsh-agent-instructions` for every new session | auto-discovered at `resolveDshHome()/AGENTS.md` |
+| `keysmith-plugins/lookup-prepend/index.js` | Lookup delivery plugin (quiet stanza, 401 on `web_search`/`web_fetch`, organic pan `/s/` collection) | `file://` insert in `cordis.patch.yml`; path is absolute so a Mirasim per-session home still loads it |
 | `cordis.patch.yml` | Home-level user patch layer applied after every bundle layer, ordered above each profile's own patch file | `dsh-app-boot` `watchUserPatches` |
+| `profiles/node_modules/@deepseek-ai/dsh-llm-deepseek/lib/index.js` | Optional streaming-tool-call adapter hot-fix | only when the file exists and matches the known snippet |
 
-Both are regular files. A deployment either creates them (no prior file) or
-backs them up (`*.bak_<timestamp>`) and replaces them.
+The three required files are regular files. A deployment either creates them
+(no prior file) or backs them up (`*.bak_<timestamp>` at the home root) and
+replaces them. The plugin is written **before** the patch so the insert names
+a file that already exists.
 
 ## Transaction directory
 
@@ -60,15 +65,16 @@ manifest publication and journal removal (see below).
 
 1. Create the transaction directory with snapshots and the immutable intent.
 2. Write backups for pre-existing resources (`AGENTS.md.bak_<ts>`,
-   `cordis.patch.yml.bak_<ts>`).
+   `lookup-prepend-index.js.bak_<ts>`, `cordis.patch.yml.bak_<ts>`).
 3. Atomically write `AGENTS.md` (temp file + `os.replace`), phase
    `agents-md-intent` → recorded before the write.
-4. Atomically write `cordis.patch.yml`, phase `patch-intent`.
-5. Publish the manifest: archive the previous manifest
+4. Atomically write the lookup plugin, phase `lookup-plugin-intent`.
+5. Atomically write `cordis.patch.yml`, phase `patch-intent`.
+6. Publish the manifest: archive the previous manifest
    (`.dsh-keysmith-manifest.json.uninstalled_<ts>` is the uninstall archive;
    deploys keep the prior manifest fingerprint inside `previous_manifest`),
    then atomically write `.dsh-keysmith-manifest.json`.
-6. Write the cleanup marker, verify every live fingerprint against the
+7. Write the cleanup marker, verify every live fingerprint against the
    manifest (`final-sweep`), delete the transaction directory, then delete
    the marker.
 
@@ -83,7 +89,8 @@ The mirror of deploy, gated by the manifest:
 - verify each live resource still matches the manifest `after` fingerprint
   (a drifted file is refused rather than clobbered),
 - restore each resource from its backup, or delete it when the deploy created
-  it (`before` fingerprint null),
+  it (`before` fingerprint null); for the lookup plugin, empty
+  `keysmith-plugins/` directories are removed after a delete,
 - archive the manifest, then restore the previous manifest layer recorded in
   `previous_manifest` (layered uninstall across successive deploys).
 
@@ -113,6 +120,7 @@ strictly these top-level keys:
   "deployment_id": "<32-hex transaction id>",
   "created_at": "<ISO-8601 Z>",
   "agents_md":        {"path": "…", "before": fp|null, "after": fp, "backup": "…|null"},
+  "lookup_plugin":    {"path": "keysmith-plugins/lookup-prepend/index.js", "before": fp|null, "after": fp, "backup": "…|null"},
   "cordis_patch":     {"path": "…", "before": fp|null, "after": fp, "backup": "…|null"},
   "previous_manifest": {"fingerprint": fp|null, "backup": null}
 }
@@ -123,8 +131,10 @@ A fingerprint is `{size, mtime_ns, sha256}` (portable: no absolute paths).
 
 ## Patch-body contract
 
-The deployed `cordis.patch.yml` is a top-level YAML array with one
-id-targeted patch against the `dsh-base` `system-prompt` row:
+The deployed `cordis.patch.yml` is a top-level YAML array: an id-targeted
+patch against the `dsh-base` `system-prompt` row, restated web-preset
+persona rows when the dump contains them, and an absolute-path `insert`
+of the lookup plugin:
 
 ```yaml
 - id: system-prompt
