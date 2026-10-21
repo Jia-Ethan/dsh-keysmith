@@ -31,8 +31,10 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-LIVE_HOME = Path.home() / ".dsh"
-DSH = Path("/opt/homebrew/bin/dsh")
+LIVE_HOME = Path(os.environ.get("DSH_LIVE_HOME", str(Path(os.path.realpath(os.path.expanduser("~"))))) ) / ".dsh"
+if not LIVE_HOME.exists():
+    LIVE_HOME = Path("/Users/ethan/.dsh")
+DSH = Path(os.environ.get("DSH_BIN", "/opt/homebrew/bin/dsh"))
 PLUGIN_SRC = REPO / "plugins" / "lookup-prepend" / "index.js"
 PROMPT = "找《凤凰 / PHOENIXES》Windows/Linux 网盘。要百度或夸克。"
 PATCH = Path("/tmp/dsh-reasoning-max.yml")
@@ -160,8 +162,37 @@ def _load_env(home: Path, variant: str, log_path: Path) -> dict[str, str]:
     return env
 
 
-def _launch(run_dir: Path, variant: str, replica: int) -> subprocess.Popen:
+TRANSPORT_RE = re.compile(r"dsh:\s*TRANSPORT:\s*Connection error", re.I)
+
+
+def _is_transport_failure(err: Path) -> bool:
+    """True when the replica died to a DeepSeek-side transport drop.
+
+    Counts only a clean exit whose whole stderr is the transport line --
+    mid-run drops after a delivered final are not retried (the score is
+    already recorded from the jsonl).
+    """
+    try:
+        text = err.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return False
+    if not text:
+        return False
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    return bool(lines) and all(TRANSPORT_RE.search(ln) for ln in lines)
+
+
+def _relaunch(run_dir: Path, variant: str, replica: int, attempt: int) -> tuple[subprocess.Popen, str]:
+    """(Re)launch one replica; fresh home so state from a dead run is not reused."""
     tag = f"{variant}-r{replica}"
+    if attempt:
+        tag = f"{variant}-r{replica}a{attempt}"
+    proc = _launch(run_dir, variant, tag)
+    return proc, tag
+
+
+def _launch(run_dir: Path, variant: str, tag: str) -> subprocess.Popen:
+    replica_suffix = tag.rsplit("-r", 1)[-1]
     home = run_dir / "homes" / tag
     _prepare_home(home, variant)
     out = run_dir / "out" / f"{tag}.jsonl"
@@ -182,7 +213,7 @@ def _launch(run_dir: Path, variant: str, replica: int) -> subprocess.Popen:
     stderr = err.open("w", encoding="utf-8")
     proc = subprocess.Popen(
         cmd,
-        cwd=str(Path.home()),
+        cwd=str(LIVE_HOME.parent),
         env=env,
         stdout=stdout,
         stderr=stderr,
@@ -191,7 +222,7 @@ def _launch(run_dir: Path, variant: str, replica: int) -> subprocess.Popen:
     meta = {
         "tag": tag,
         "variant": variant,
-        "replica": replica,
+        "replica": replica_suffix,
         "pid": proc.pid,
         "home": str(home),
         "out": str(out),
@@ -239,6 +270,19 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=720)
     parser.add_argument("--variants", default=",".join(VARIANTS))
     parser.add_argument("--run-dir", default="")
+    parser.add_argument(
+        "--retries",
+        type=int,
+        default=2,
+        help="auto-relaunch a replica whose whole stderr is a TRANSPORT "
+        "Connection error (DeepSeek-side drop); 0 disables",
+    )
+    parser.add_argument(
+        "--retry-backoff",
+        type=float,
+        default=15.0,
+        help="seconds to wait before relaunching a transport-failed replica",
+    )
     args = parser.parse_args()
     if not DSH.exists():
         print("missing /opt/homebrew/bin/dsh", file=sys.stderr)
@@ -261,20 +305,41 @@ def main() -> int:
     (run_dir / "out").mkdir(exist_ok=True)
     print(f"RUN_DIR={run_dir}", flush=True)
     procs: dict[str, subprocess.Popen] = {}
+    retries_used: dict[str, int] = {}
     for variant in variants:
         for replica in range(args.replicas):
             tag = f"{variant}-r{replica}"
             print(f"LAUNCH {tag}", flush=True)
-            procs[tag] = _launch(run_dir, variant, replica)
+            procs[tag] = _launch(run_dir, variant, tag)
     deadline = time.time() + args.timeout
     remaining = set(procs)
     while remaining and time.time() < deadline:
         done = []
-        for tag in remaining:
+        for tag in list(remaining):
             rc = procs[tag].poll()
-            if rc is not None:
-                print(f"EXIT {tag} rc={rc}", flush=True)
-                done.append(tag)
+            if rc is None:
+                continue
+            print(f"EXIT {tag} rc={rc}", flush=True)
+            done.append(tag)
+            err_path = run_dir / "out" / f"{tag}.err"
+            if (
+                rc != 0
+                and _is_transport_failure(err_path)
+                and retries_used.get(tag, 0) < args.retries
+                and time.time() + args.retry_backoff < deadline
+            ):
+                retries_used[tag] = retries_used.get(tag, 0) + 1
+                attempt = retries_used[tag]
+                backoff = args.retry_backoff
+                print(
+                    f"TRANSPORT-RETRY {tag} attempt={attempt} backoff={backoff:.0f}s",
+                    flush=True,
+                )
+                time.sleep(backoff)
+                new_tag = f"{tag}a{attempt}"
+                procs[new_tag] = _launch(run_dir, variant, new_tag)
+                remaining.add(new_tag)
+                print(f"RELAUNCH {new_tag}", flush=True)
         remaining -= set(done)
         if remaining:
             time.sleep(5)
