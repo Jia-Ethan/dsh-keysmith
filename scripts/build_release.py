@@ -108,7 +108,7 @@ def _write_zip(out: Path, tag: str, files: list[tuple[str, bytes]]) -> None:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for name, data in files:
-            info = zipfile.ZipInfo(name=f"dsh-keysmith-{tag}/{name}", date_time=(1980, 1, 1, 0, 0, 0))
+            info = zipfile.ZipInfo(filename=f"dsh-keysmith-{tag}/{name}", date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o644 << 16
             zf.writestr(info, data)

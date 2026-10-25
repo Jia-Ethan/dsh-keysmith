@@ -110,6 +110,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Correct the ZIP entry constructor so release builds can produce the standalone
+  CLI, ZIP, tar.gz, and checksums from a clean tagged tree.
+
+- Skip config composition when `profiles/web` is incomplete. Deployment falls
+  back with a warning instead of allowing dsh to create unowned profile files.
+
 - The generated `cordis.patch.yml` no longer deletes fields another layer adds
   to the same row. A patch replaces the targeted entry's `config` object
   wholesale — the include loader assigns `target[key] = value`, there is no deep
