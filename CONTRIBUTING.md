@@ -22,6 +22,7 @@
   `AGENTS.md`. Isolated `web` first; live `profiles/web` only when the
   operator asks.
 - Do not patch host `node_modules`. Do not auto-restart DSH.
+- Project agent rules live in `CLAUDE.md` (red lines + command cheat sheet).
 
 ## Workflow
 

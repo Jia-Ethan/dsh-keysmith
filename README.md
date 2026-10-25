@@ -29,5 +29,7 @@ v1 does not write host `node_modules` and does not restart DSH.
 ## Docs
 
 - [CHANGELOG.md](CHANGELOG.md) — 0.4.0
+- [docs/hooks-transactions.md](docs/hooks-transactions.md) — install resources
 - [docs/refusal-reduction.md](docs/refusal-reduction.md) — why assemble beats personaPrefix
 - [CONTRIBUTING.md](CONTRIBUTING.md)
+- [SECURITY.md](SECURITY.md)

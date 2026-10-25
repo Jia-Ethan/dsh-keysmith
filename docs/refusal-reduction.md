@@ -171,20 +171,15 @@ r3（`broad_forum` ×6）、r4（×2）、r5、r6、r6b 全程 **0 refuse**。�
 - 官方行预探（r6）：harvest 顺带探 itch.io / patreon.com 搜索页，把 `| host | 有/无相关结果 |` 渲染进拼接页尾。胜出副本 **47 步**收表（r5 为 64），官方行带版本/体积直接进表，不再花 20–30 步自查店面。
 - 失败模式只剩两种，都不是拒绝：DeepSeek 端 `TRANSPORT: Connection error` 断流（`scripts/run_lookup_ab.py --retries` 自动重跑吃掉）；跑满超时被砍（r5b 死时 51 链在手、r6b-r1 死时 69 链在手）。
 
-A/B 工具：`scripts/run_lookup_ab.py`（隔离 home、并发副本、splice 评分、插件日志按 `DSH_LOOKUP_LOG` 隔离、TRANSPORT 自动重试）。分支已推 PR #5。
+A/B 工具：`scripts/run_lookup_ab.py`（隔离 home、并发副本、splice 评分、插件日志按 `DSH_LOOKUP_LOG` 隔离、TRANSPORT 自动重试）。0.4.0 加载路径在 PR #6；#5 已关。
 
 ## 下一步优先级
 
-### P0：先部署、再测量（1 天）
+### P0：活体装入与 Phoenixes（operator-gated）
 
-1. 在隔离 DSH home 里 `--dry-run`，确认 patch 内容，再 `--yes` 部署。
-2. 重启 DSH；`AGENTS.md` 和 `cordis.patch.yml` 只对新会话生效。
-3. 用 22 题冻结题库跑四臂：
-   - `stock`：无 system 契约
-   - `agents`：仅 AGENTS.md（当前布局）
-   - `system`：仅 personaPrefix 契约
-   - `system_tail`：personaPrefix + 末尾 final check
-4. 指标：`deliver` / `refuse` / `hollow` / `empty_length` / `tool_call`；拒绝率分母只算 `deliver+refuse+hollow`。
+隔离 home `/tmp/dsh-keysmith-isolated-20261025/.dsh` 已 `--yes`，assemble 自检通过。下一步是 Ethan 开口后再装 live `profiles/web`，完全退出并重开宿主，用新会话跑 Phoenixes 首轮表（`pan.baidu.com` / `pan.quark.cn` `/s/`）。不要再用 0.3.0 的 personaPrefix 四臂当主路径。
+
+22 题冻结题库仍要测拒绝率（`deliver` / `refuse` / `hollow` / `empty_length` / `tool_call`；拒绝率分母只算 `deliver+refuse+hollow`），对照臂是 stock vs 0.4.0 assemble 插件。
 
 ### P1：把提示词工程变成可回归的评测（2–3 天）
 
