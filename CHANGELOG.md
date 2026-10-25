@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-10-25
+
+### Added
+
+- Cordis plugin at `plugin/`: assemble-time identity strip, system-level
+  delivery contract pinned at `HARNESS_IDENTITY - 1`, in-plugin lookup
+  route, and a web dock badge. Load path follows dsh-purge (Apache-2.0):
+  rewrite `systemPrompt.assemble` every turn. Persona and host-file
+  patches are not copied.
+- `dsh plugin --profile web add <plugin-dir>` via
+  `plugin/scripts/ensure-profile-bundle.mjs` (bundles + body insert).
+
+### Changed
+
+- The CLI is a profile installer. It copies `plugin/` into
+  `profiles/<name>/node_modules/dsh-keysmith`, appends the bundle name,
+  and writes the insert. A lone `[]` in a stub `cordis.patch.yml` is
+  dropped before the insert so the file stays one YAML sequence. It
+  does not dump `AGENTS.md`, does not write the home `cordis.patch.yml`,
+  and does not patch `@deepseek-ai` `node_modules`. Live Switch packs
+  stay untouched.
+- Default profile is `web`. Desktop / headless are a later round.
+- JSON envelope `dsh-keysmith/v1` still reports `state` /
+  `dsh_dir_exists` / `adapter_patch` (adapter is always `absent`).
+
+### Removed
+
+- Home-level `file://` lookup insert and the adapter hot-fix as deploy
+  resources. Lookup lives inside the plugin.
+- Transaction journals. `--recover` is a documented no-op.
+
 ## [0.3.0] — 2026-10-21
 
 ### Added

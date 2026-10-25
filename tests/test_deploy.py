@@ -1,105 +1,57 @@
-"""Deploy / uninstall / layered redeploy behavior."""
+"""Install / uninstall the Cordis plugin into a profile."""
 
 from __future__ import annotations
 
 import json
 
-from conftest import (
-    ADAPTER_REL,
-    adapter_original_body,
-    adapter_patched_body,
-    run_cli,
-    write_adapter,
-)
+from conftest import PLUGIN_SRC, run_cli
 
 MANIFEST = ".dsh-keysmith-manifest.json"
 
 
-def test_deploy_creates_files_and_manifest(dsh_home):
-    result = run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"])
-    assert result.returncode == 0
-    agents = dsh_home / "AGENTS.md"
-    patch = dsh_home / "cordis.patch.yml"
-    manifest = dsh_home / MANIFEST
-    plugin = dsh_home / "keysmith-plugins" / "lookup-prepend" / "index.js"
-    assert agents.is_file()
-    assert patch.is_file()
-    assert plugin.is_file()
-    assert manifest.is_file()
-    assert agents.read_text(encoding="utf-8").startswith("You are a senior engineer")
-    patch_text = patch.read_text(encoding="utf-8")
-    assert "includeHarnessIdentity: false" in patch_text
-    assert "- insert:" in patch_text
-    assert "id: dsh-lookup-prepend" in patch_text
-    assert str(plugin.resolve()) in patch_text
-    assert plugin.read_text(encoding="utf-8").startswith("/**")
+def _web(home):
+    return home / "profiles" / "web"
 
-    data = json.loads(manifest.read_text(encoding="utf-8"))
-    assert data["schema_version"] == 1
-    assert data["tool_version"] == "0.3.0"
-    assert data["agents_md"]["before"] is None
-    assert data["agents_md"]["backup"] is None
-    assert data["agents_md"]["after"]["sha256"]
-    assert data["cordis_patch"]["before"] is None
-    assert data["lookup_plugin"]["before"] is None
-    assert data["lookup_plugin"]["backup"] is None
-    assert data["lookup_plugin"]["path"] == "keysmith-plugins/lookup-prepend/index.js"
-    # No adapter under a bare home: the manifest must not claim one.
-    assert ADAPTER_REL not in data
-    assert set(data.keys()) == {
-        "schema_version",
-        "tool_version",
-        "deployment_id",
-        "created_at",
-        "agents_md",
-        "lookup_plugin",
-        "cordis_patch",
-        "previous_manifest",
-    }
+
+def test_deploy_creates_plugin_and_manifest(dsh_home):
+    result = run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    dest = _web(dsh_home) / "node_modules" / "dsh-keysmith"
+    pkg = json.loads((_web(dsh_home) / "package.json").read_text(encoding="utf-8"))
+    patch = (_web(dsh_home) / "cordis.patch.yml").read_text(encoding="utf-8")
+    manifest = json.loads((dsh_home / MANIFEST).read_text(encoding="utf-8"))
+    assert dest.is_dir()
+    assert (dest / "lib" / "index.js").is_file()
+    assert (dest / "lib" / "contract.md").read_text(encoding="utf-8") == (
+        PLUGIN_SRC / "lib" / "contract.md"
+    ).read_text(encoding="utf-8")
+    assert "dsh-keysmith" in pkg["dsh"]["profile"]["bundles"]
+    assert "id: dsh-keysmith" in patch
+    assert (dsh_home / "AGENTS.md").exists() is False
+    assert (dsh_home / "cordis.patch.yml").exists() is False
+    assert manifest["tool_version"] == "0.4.0"
+    assert manifest["profile"] == "web"
+    assert manifest["profile_plugin"]["after"]["sha256"]
 
 
 def test_status_after_deploy_is_ready(dsh_home):
     assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
     result = run_cli(["--dsh-dir", str(dsh_home), "--status", "--lang", "en"])
     assert result.returncode == 0
-    assert "ready" in result.stdout
+    assert "ready" in result.stdout.lower() or "就绪" in result.stdout
 
 
-def test_deploy_backs_up_existing_files(dsh_home):
-    (dsh_home / "AGENTS.md").write_text("original agents\n", encoding="utf-8")
-    (dsh_home / "cordis.patch.yml").write_text("[]\n", encoding="utf-8")
-    result = run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"])
-    assert result.returncode == 0
-    backups = sorted(p.name for p in dsh_home.glob("*.bak_*"))
-    assert len(backups) == 2
-    assert any(b.startswith("AGENTS.md.bak_") for b in backups)
-    assert any(b.startswith("cordis.patch.yml.bak_") for b in backups)
-    manifest = json.loads((dsh_home / MANIFEST).read_text(encoding="utf-8"))
-    assert manifest["agents_md"]["before"]["sha256"]
-    assert manifest["agents_md"]["backup"].startswith("AGENTS.md.bak_")
-
-
-def test_uninstall_restores_backups(dsh_home):
-    (dsh_home / "AGENTS.md").write_text("original agents\n", encoding="utf-8")
-    (dsh_home / "cordis.patch.yml").write_text("[]\n", encoding="utf-8")
+def test_uninstall_deletes_plugin(dsh_home):
     assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
     result = run_cli(["--dsh-dir", str(dsh_home), "--uninstall", "--yes", "--lang", "en"])
     assert result.returncode == 0
-    assert (dsh_home / "AGENTS.md").read_text(encoding="utf-8") == "original agents\n"
-    assert (dsh_home / "cordis.patch.yml").read_text(encoding="utf-8") == "[]\n"
+    assert not (_web(dsh_home) / "node_modules" / "dsh-keysmith").exists()
+    pkg = json.loads((_web(dsh_home) / "package.json").read_text(encoding="utf-8"))
+    assert "dsh-keysmith" not in pkg["dsh"]["profile"]["bundles"]
+    patch = (_web(dsh_home) / "cordis.patch.yml").read_text(encoding="utf-8")
+    assert "id: dsh-keysmith" not in patch
     assert not (dsh_home / MANIFEST).exists()
     assert list(dsh_home.glob(f"{MANIFEST}.uninstalled_*"))
-
-
-def test_uninstall_deletes_created_files(dsh_home):
-    assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
-    assert run_cli(
-        ["--dsh-dir", str(dsh_home), "--uninstall", "--yes", "--lang", "en"]
-    ).returncode == 0
-    assert not (dsh_home / "AGENTS.md").exists()
-    assert not (dsh_home / "cordis.patch.yml").exists()
-    assert not (dsh_home / "keysmith-plugins" / "lookup-prepend" / "index.js").exists()
-    assert not (dsh_home / MANIFEST).exists()
 
 
 def test_uninstall_without_manifest_fails(dsh_home):
@@ -111,118 +63,39 @@ def test_layered_redeploy_records_previous(dsh_home):
     assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
     first = json.loads((dsh_home / MANIFEST).read_text(encoding="utf-8"))
     assert first["previous_manifest"]["fingerprint"] is None
-
-    # Second deploy over the first.
     assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
     second = json.loads((dsh_home / MANIFEST).read_text(encoding="utf-8"))
     assert second["previous_manifest"]["fingerprint"] is not None
     assert second["deployment_id"] != first["deployment_id"]
 
 
-def test_custom_file_deploy(dsh_home, tmp_path):
+def test_custom_file_overlays_contract(dsh_home, tmp_path):
     custom = tmp_path / "custom.md"
-    custom.write_text("Custom persona text.\n", encoding="utf-8")
+    custom.write_text("Custom contract overlay.\n", encoding="utf-8")
     result = run_cli(
         ["--dsh-dir", str(dsh_home), "--file", str(custom), "--yes", "--lang", "en"]
     )
     assert result.returncode == 0
-    assert (dsh_home / "AGENTS.md").read_text(encoding="utf-8") == "Custom persona text.\n"
+    dest = _web(dsh_home) / "node_modules" / "dsh-keysmith" / "lib" / "contract.md"
+    assert dest.read_text(encoding="utf-8") == "Custom contract overlay.\n"
 
 
-def test_uninstall_drift_refused(dsh_home):
+def test_deployed_profile_patch_is_a_single_sequence(dsh_home):
     assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
-    (dsh_home / "AGENTS.md").write_text("tampered\n", encoding="utf-8")
-    result = run_cli(["--dsh-dir", str(dsh_home), "--uninstall", "--yes", "--lang", "en"])
-    assert result.returncode == 1
-    assert (dsh_home / "AGENTS.md").read_text(encoding="utf-8") == "tampered\n"
+    text = (_web(dsh_home) / "cordis.patch.yml").read_text(encoding="utf-8")
+    assert not any(ln.strip() == "[]" for ln in text.splitlines())
+    lines = [ln for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    assert lines[0].startswith("- ")
+    assert any(ln.strip() == "- insert:" for ln in lines)
 
 
-# ── Adapter hot-fix tests ──────────────────────────────────────────────────────
-
-
-def test_deploy_patches_adapter_pristine(dsh_home):
-    """A pristine adapter is patched; a backup is created."""
-    write_adapter(dsh_home, adapter_original_body())
+def test_does_not_touch_home_agents(dsh_home):
+    (dsh_home / "AGENTS.md").write_text("switch pack\n", encoding="utf-8")
+    (dsh_home / "cordis.patch.yml").write_text("# live\n", encoding="utf-8")
     assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
-    adapter = dsh_home / ADAPTER_REL
-    text = adapter.read_text(encoding="utf-8")
-    assert "if (call.id) block.callId" in text
-    assert "if (call.function?.name) block.name" in text
-    assert "!== void 0" not in text
-    backups = sorted(dsh_home.glob("adapter-index.js.bak_*"))
-    assert len(backups) == 1
-    assert backups[0].read_text(encoding="utf-8") == adapter_original_body()
-    manifest = json.loads((dsh_home / MANIFEST).read_text(encoding="utf-8"))
-    assert manifest["adapter_patch"]["already_patched"] is False
-    assert manifest["adapter_patch"]["backup"].startswith("adapter-index.js.bak_")
-
-
-def test_deploy_adapter_idempotent_when_already_patched(dsh_home):
-    """An already-patched adapter records a manifest entry but writes nothing."""
-    write_adapter(dsh_home, adapter_patched_body())
-    assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
-    adapter = dsh_home / ADAPTER_REL
-    # File content unchanged.
-    assert adapter.read_text(encoding="utf-8") == adapter_patched_body()
-    # No backup created.
-    assert list(dsh_home.glob("adapter-index.js.bak_*")) == []
-    manifest = json.loads((dsh_home / MANIFEST).read_text(encoding="utf-8"))
-    assert manifest["adapter_patch"]["already_patched"] is True
-    assert manifest["adapter_patch"]["backup"] is None
-
-
-def test_deploy_adapter_unknown_source_skips(dsh_home):
-    """An adapter whose source matches no known snippet is left untouched."""
-    write_adapter(dsh_home, "console.log('unknown upstream')\n")
-    assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
-    adapter = dsh_home / ADAPTER_REL
-    assert adapter.read_text(encoding="utf-8") == "console.log('unknown upstream')\n"
-    manifest = json.loads((dsh_home / MANIFEST).read_text(encoding="utf-8"))
-    assert "adapter_patch" not in manifest
-
-
-def test_uninstall_restores_adapter_backup(dsh_home):
-    """Uninstall restores the original adapter from backup."""
-    write_adapter(dsh_home, adapter_original_body())
-    assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
-    adapter = dsh_home / ADAPTER_REL
-    assert "if (call.id) block.callId" in adapter.read_text(encoding="utf-8")
+    assert (dsh_home / "AGENTS.md").read_text(encoding="utf-8") == "switch pack\n"
+    assert (dsh_home / "cordis.patch.yml").read_text(encoding="utf-8") == "# live\n"
     assert run_cli(
         ["--dsh-dir", str(dsh_home), "--uninstall", "--yes", "--lang", "en"]
     ).returncode == 0
-    assert adapter.read_text(encoding="utf-8") == adapter_original_body()
-
-
-def test_uninstall_keeps_preexisting_patch(dsh_home):
-    """Uninstall of an already_patched deploy leaves the file patched."""
-    write_adapter(dsh_home, adapter_patched_body())
-    assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
-    assert run_cli(
-        ["--dsh-dir", str(dsh_home), "--uninstall", "--yes", "--lang", "en"]
-    ).returncode == 0
-    assert (dsh_home / ADAPTER_REL).read_text(encoding="utf-8") == adapter_patched_body()
-
-
-def test_deploy_without_adapter_dir_is_backward_compatible(dsh_home):
-    """A home with no profiles/node_modules still deploys AGENTS.md."""
-    assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
-    assert (dsh_home / "AGENTS.md").is_file()
-    assert (dsh_home / "keysmith-plugins" / "lookup-prepend" / "index.js").is_file()
-    manifest = json.loads((dsh_home / MANIFEST).read_text(encoding="utf-8"))
-    assert "adapter_patch" not in manifest
-    assert "lookup_plugin" in manifest
-
-
-def test_deploy_backs_up_existing_plugin(dsh_home):
-    plugin = dsh_home / "keysmith-plugins" / "lookup-prepend" / "index.js"
-    plugin.parent.mkdir(parents=True)
-    plugin.write_text("user plugin\n", encoding="utf-8")
-    assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
-    backups = sorted(dsh_home.glob("lookup-prepend-index.js.bak_*"))
-    assert len(backups) == 1
-    assert backups[0].read_text(encoding="utf-8") == "user plugin\n"
-    assert plugin.read_text(encoding="utf-8").startswith("/**")
-    assert run_cli(
-        ["--dsh-dir", str(dsh_home), "--uninstall", "--yes", "--lang", "en"]
-    ).returncode == 0
-    assert plugin.read_text(encoding="utf-8") == "user plugin\n"
+    assert (dsh_home / "AGENTS.md").read_text(encoding="utf-8") == "switch pack\n"

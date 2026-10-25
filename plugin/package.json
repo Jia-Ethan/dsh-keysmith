@@ -1,0 +1,55 @@
+{
+  "name": "dsh-keysmith",
+  "version": "0.4.0",
+  "description": "DeepSeek Harness delivery plugin: assemble-time identity strip, system-level contract, lookup route, dock badge.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client.js",
+    "./client.js": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "client.js",
+    "cordis.patch.yml",
+    "scripts",
+    "LICENSE"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/ensure-profile-bundle.mjs",
+    "harness:check": "node --check lib/index.js && node --check lib/identity.js && node --check lib/lookup.js && node --check client.js"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "keysmith"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jia-Ethan/dsh-keysmith.git"
+  },
+  "dsh": {
+    "id": "dsh-keysmith",
+    "name": "DSH Keysmith",
+    "version": "0.4.0",
+    "permissions": "系统提示词注入, 客户端状态条",
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    },
+    "install": {
+      "preferred": "tarball"
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

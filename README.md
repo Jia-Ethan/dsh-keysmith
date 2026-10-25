@@ -1,19 +1,33 @@
 # dsh-keysmith
 
-Versioned DeepSeek Harness home deploy: `AGENTS.md`, `cordis.patch.yml`, and the required local-execution plugin. MIT. Standard library only.
+DeepSeek Harness Cordis plugin: assemble-time identity strip, system-level
+delivery contract, lookup route, dock badge. MIT.
+
+The runtime is `plugin/`. The Python CLI is a preview-first installer that
+copies that package into one DSH profile (default `web`). It does not dump
+`AGENTS.md` and does not patch `@deepseek-ai` node_modules.
 
 ```sh
-python3 dsh-keysmith.py --dsh-dir /tmp/dsh-home/.dsh --dry-run
+python3 dsh-keysmith.py --dsh-dir /tmp/dsh-home/.dsh --dry-run --lang en
+python3 dsh-keysmith.py --dsh-dir /tmp/dsh-home/.dsh --yes --profile web
 python3 -m pytest -q tests
+node tests/plugin/test_identity.mjs
+node tests/plugin/test_assemble_guard.mjs
 ```
 
-Do not run `--yes` against a live `~/.dsh` that already holds a Switch pack `AGENTS.md`. Preview on a throwaway home. Plugin JS is embedded in the CLI and must stay byte-identical to `plugins/lookup-prepend/index.js`.
+Equivalent official channel (same package):
 
-0.3.0 puts the delivery contract in `personaPrefix` (system prompt). The plugin adds an always-on local-execution context, a quiet lookup table stanza, and `401 Unauthorized` on native `web_search` / `web_fetch` during lookup. Lookup delivers: the plugin splices a whole harvested forum page into the message flow as a labeled bash-curl tool result (`DSH_LOOKUP_VARIANT=broad_forum`, the default), pre-probes itch/Patreon storefront rows, and the model fills the channel table from its own tool output. A/B runner: `scripts/run_lookup_ab.py`. Findings: [docs/refusal-reduction.md](docs/refusal-reduction.md).
+```sh
+dsh plugin --profile web add /path/to/dsh-keysmith/plugin
+```
+
+Fully quit and reopen that host after install. New sessions pick up the
+assemble guard. Live `~/.dsh/AGENTS.md` (Switch pack) is left alone.
+
+v1 does not write host `node_modules` and does not restart DSH.
 
 ## Docs
 
-- [CHANGELOG.md](CHANGELOG.md) — 0.3.0
-- [docs/refusal-reduction.md](docs/refusal-reduction.md) — refusal findings and the plugin
-- [docs/hooks-transactions.md](docs/hooks-transactions.md) — journal / recover
-- [CONTRIBUTING.md](CONTRIBUTING.md) — embed identity and live-home red line
+- [CHANGELOG.md](CHANGELOG.md) — 0.4.0
+- [docs/refusal-reduction.md](docs/refusal-reduction.md) — why assemble beats personaPrefix
+- [CONTRIBUTING.md](CONTRIBUTING.md)

@@ -1,6 +1,20 @@
 # DSH Keysmith 拒绝率：根因、实测与改造方案
 
-日期：2026-10-21
+日期：2026-10-21；0.4.0 加载路径补记 2026-10-25。
+
+## 0.4.0 加载路径
+
+0.3.0 把契约写进 `personaPrefix`。Web 0.2.x 默认挂 `standard` preset，
+`dsh-persona` 会盖掉全局 prefix：`dump-config` 能看到契约，直播
+`system/message` 仍是 coding-agent 行。file:// lookup 也 hook 不了
+`systemPrompt.assemble`。
+
+0.4.0 改成 Cordis 插件。`plugin/lib/identity.js` 每回合改写
+`systemPrompt.assemble`：剥 harness / coding-agent 身份，把
+`dsh-keysmith:contract` 钉在 `HARNESS_IDENTITY - 1`。lookup 折进同一
+插件。CLI 只把这个包装进一个 profile（默认 `web`），不 dump
+`AGENTS.md`，不打 `@deepseek-ai` 宿主补丁。下面 0.3.0 的实测仍有效，
+作为「为什么 personaPrefix 不够」的记录。
 
 ## 结论
 
