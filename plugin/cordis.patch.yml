@@ -1,0 +1,15 @@
+# dsh-keysmith bundle patch.
+#
+# Do not replace the system-prompt row here: a wholesale config write
+# clobbers dsh-web-app fields and the unregistered cwd interpolator
+# throws on 0.2.1. Identity strip and contract pin happen in assemble,
+# not in YAML.
+#
+# The body insert that actually loads this plugin is written by
+# scripts/ensure-profile-bundle.mjs into the *profile* cordis.patch.yml.
+# Re-inserting here while the name is already in bundles trips
+# "already queued: dsh-keysmith" (same Hub bug dsh-purge 1.1.75 fixed).
+- id: dsh-keysmith
+  inject: [systemPrompt, tools]
+  config:
+    enabled: true

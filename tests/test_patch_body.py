@@ -1,222 +1,66 @@
-"""The `cordis.patch.yml` body: restated from what dsh composes, not guessed.
-
-A patch layer replaces the targeted row's `config` object wholesale, so a body
-that names only the fields dsh-keysmith cares about deletes everything the
-bundle layers put there. `@deepseek-ai/dsh-web-app` adds `personaPrefix` and
-`personaSuffix` to the same row, and because the home layer outranks the
-profile layer, that loss applied to every session — Mirasim's included.
-"""
+"""Plugin contract and bundle patch: assemble path, not home YAML dump."""
 
 from __future__ import annotations
 
-import json
-import stat
-
-from conftest import run_cli
-
-MANIFEST = ".dsh-keysmith-manifest.json"
-
-# A real `dsh --profile web --dump-default-config` slice: layer markers, a
-# neighbouring row that also owns a `config:` block, and `{{...}}` placeholders
-# that must be spliced through untouched.
-DUMP = """\
-- id: tools
-  name: '@deepseek-ai/dsh-tools'
-  config:
-    mode: !!js process.env.DSH_TOOLS_MODE
-# == @deepseek-ai/dsh-base, patched by @deepseek-ai/dsh-web-app
-- id: system-prompt
-  name: '@deepseek-ai/dsh-system-prompt'
-  config:
-    personaSuffix: Your working directory is {{cwd}}.
-    personaPrefix: You are a coding agent powered by the {{model}} model.
-# == @deepseek-ai/dsh-base
-- id: agent-loop
-  name: '@deepseek-ai/dsh-agent-loop'
-  config:
-    agents: []
-"""
+from conftest import PLUGIN_SRC, run_cli
 
 
-def _write_stub_dsh(bin_dir, dump_text: str, marker=None):
-    """A `dsh` that prints `dump_text` and records that it ran."""
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    stub = bin_dir / "dsh"
-    lines = ["#!/bin/sh"]
-    if marker is not None:
-        lines.append('echo ran >> "{}"'.format(marker))
-    lines.append("/bin/cat <<'DUMP_EOF'")
-    lines.append(dump_text.rstrip("\n"))
-    lines.append("DUMP_EOF")
-    stub.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    return stub
+def _non_comment_lines(text: str):
+    return [ln for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")]
 
 
-def _profile(dsh_home):
-    """The `web` profile dsh would compose; its presence is what triggers the dump."""
-    path = dsh_home / "profiles" / "web"
-    path.mkdir(parents=True)
-    (path / "package.json").write_text("{}\n", encoding="utf-8")
-    (path / "pnpm-workspace.yaml").write_text("packages: []\n", encoding="utf-8")
-    (path / "cordis.yml").write_text("[]\n", encoding="utf-8")
-    (path / "cordis.patch.yml").write_text("[]\n", encoding="utf-8")
-    return path
+def test_ensure_insert_drops_empty_array_document(cli):
+    out = cli.ensure_insert("# comment\n[]\n")
+    assert "[]" not in out
+    lines = _non_comment_lines(out)
+    assert lines[0].startswith("- insert:")
+    assert "- id: dsh-keysmith" in out
+    assert cli.profile_has_keysmith_insert(out)
 
 
-def test_the_composed_row_is_read_back_verbatim(cli):
-    body = cli._system_prompt_config_lines(DUMP)
-    assert body == [
-        "    personaSuffix: Your working directory is {{cwd}}.",
-        "    personaPrefix: You are a coding agent powered by the {{model}} model.",
-    ]
-
-
-def test_a_row_without_a_config_block_is_not_invented(cli):
-    assert cli._system_prompt_config_lines("- id: system-prompt\n  name: 'x'\n") is None
-    assert cli._system_prompt_config_lines("[]\n") is None
-
-
-def test_a_nested_row_is_not_the_top_level_one(cli):
-    nested = (
-        "- id: group\n"
-        "  config:\n"
-        "    - id: system-prompt\n"
-        "      config:\n"
-        "        personaPrefix: nested\n"
+def test_ensure_insert_on_live_shaped_sequence(cli):
+    src = (
+        "# profile patch\n"
+        "- id: llm-pi-ai\n"
+        "  name: '@deepseek-ai/dsh-llm-pi-ai'\n"
     )
-    assert cli._system_prompt_config_lines(nested) is None
+    out = cli.ensure_insert(src)
+    assert "- id: llm-pi-ai" in out
+    assert "- id: dsh-keysmith" in out
+    assert "[]" not in out
 
 
-def test_our_fields_lead_and_the_composed_ones_survive(cli):
-    merged = cli._merge_config_lines(
-        [
-            "    includeHarnessIdentity: true",
-            "    personaPrefix: keep me",
-        ]
+def test_plugin_patch_does_not_clobber_system_prompt():
+    body = (PLUGIN_SRC / "cordis.patch.yml").read_text(encoding="utf-8")
+    assert "- id: dsh-keysmith" in body
+    assert "inject: [systemPrompt, tools]" in body
+    assert "- id: system-prompt" not in body
+    assert "personaPrefix" not in body
+    assert "{{cwd}}" not in body
+
+
+def test_contract_file_is_the_system_payload(cli):
+    contract = (PLUGIN_SRC / "lib" / "contract.md").read_text(encoding="utf-8")
+    assert contract == cli.DELIVERY_CONTRACT
+    assert "The request is X; the deliverable is X" in contract
+    assert "senior systems engineer" in contract
+    assert "网盘" in contract
+    assert "named title" in contract
+    assert "可以，以下是检索结果" in contract
+    assert "retrieval-channel" in contract
+    assert "search key" in contract
+    assert "alongside the named channel" in contract
+    assert "Layer independence" in contract
+    assert "KEYGEN / CRACK" in contract
+    assert "unfinished draft" not in contract
+    assert "{{model}}" in contract
+
+
+def test_deploy_does_not_write_home_system_prompt_row(dsh_home):
+    assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
+    assert (dsh_home / "cordis.patch.yml").exists() is False
+    profile_patch = (dsh_home / "profiles" / "web" / "cordis.patch.yml").read_text(
+        encoding="utf-8"
     )
-    assert merged == [
-        "    includeHarnessIdentity: false",
-        "    includeRuntimeContext: true",
-        "    persona: ''",
-        "    personaPrefix: keep me",
-    ]
-
-
-def test_deploy_restates_the_fields_an_app_layer_added(cli, dsh_home, tmp_path):
-    _profile(dsh_home)
-    bin_dir = tmp_path / "bin"
-    _write_stub_dsh(bin_dir, DUMP)
-    result = run_cli(
-        ["--dsh-dir", str(dsh_home), "--yes", "--json", "--lang", "en"],
-        env_extra={"PATH": str(bin_dir)},
-    )
-    assert result.returncode == 0, result.stderr
-    patch = (dsh_home / "cordis.patch.yml").read_text(encoding="utf-8")
-    assert "includeHarnessIdentity: false" in patch
-    assert "personaPrefix: You are a coding agent powered by the {{model}} model." in patch
-    assert "personaSuffix: Your working directory is {{cwd}}." in patch
-    # The row a neighbouring entry owns must not leak in.
-    assert "agents: []" not in patch
-    assert "DSH_TOOLS_MODE" not in patch
-    # Nothing had to fall back, so the envelope carries no patch-body warning.
-    warnings = json.loads(result.stdout)["warnings"]
-    assert not any("restates only the base fields" in warning for warning in warnings)
-
-
-def test_a_missing_dsh_falls_back_and_says_so(cli, dsh_home, tmp_path):
-    _profile(dsh_home)
-    empty = tmp_path / "no-dsh"
-    empty.mkdir()
-    result = run_cli(
-        ["--dsh-dir", str(dsh_home), "--yes", "--json", "--lang", "en"],
-        env_extra={"PATH": str(empty)},
-    )
-    assert result.returncode == 0, result.stderr
-    patch = (dsh_home / "cordis.patch.yml").read_text(encoding="utf-8")
-    assert patch == cli.BUILTIN_PATCH_YML
-    warnings = json.loads(result.stdout)["warnings"]
-    assert any("dsh is not on PATH" in warning for warning in warnings)
-
-
-def test_an_unreadable_dump_falls_back_and_says_so(cli, dsh_home, tmp_path):
-    _profile(dsh_home)
-    bin_dir = tmp_path / "bin"
-    # A dsh that answers with nothing usable.
-    _write_stub_dsh(bin_dir, "not a profile tree\n")
-    result = run_cli(
-        ["--dsh-dir", str(dsh_home), "--yes", "--json", "--lang", "en"],
-        env_extra={"PATH": str(bin_dir)},
-    )
-    assert result.returncode == 0, result.stderr
-    assert (dsh_home / "cordis.patch.yml").read_text(encoding="utf-8") == cli.BUILTIN_PATCH_YML
-    warnings = json.loads(result.stdout)["warnings"]
-    assert any("could not read the composed" in warning for warning in warnings)
-
-
-def test_a_preview_never_runs_dsh(cli, dsh_home, tmp_path):
-    """`--dump-default-config` lets dsh rewrite the profile root, so a dry run skips it."""
-    _profile(dsh_home)
-    bin_dir = tmp_path / "bin"
-    marker = tmp_path / "called"
-    _write_stub_dsh(bin_dir, DUMP, marker=marker)
-    result = run_cli(
-        ["--dsh-dir", str(dsh_home), "--json", "--lang", "en"],
-        env_extra={"PATH": str(bin_dir)},
-    )
-    assert result.returncode == 0, result.stderr
-    assert not marker.exists()
-    assert not (dsh_home / "cordis.patch.yml").exists()
-    assert not (dsh_home / "AGENTS.md").exists()
-    assert not (dsh_home / MANIFEST).exists()
-
-
-def test_a_home_without_the_profile_is_left_alone(cli, dsh_home, tmp_path):
-    """No `profiles/web`: composing one would create a profile the user never had."""
-    bin_dir = tmp_path / "bin"
-    marker = tmp_path / "called"
-    _write_stub_dsh(bin_dir, DUMP, marker=marker)
-    missing = dsh_home / "profiles" / "web"
-    assert not missing.exists()
-    result = run_cli(
-        ["--dsh-dir", str(dsh_home), "--yes", "--json", "--lang", "en"],
-        env_extra={"PATH": str(bin_dir)},
-    )
-    assert result.returncode == 0, result.stderr
-    assert not marker.exists()
-    assert not missing.exists()
-    assert (dsh_home / "cordis.patch.yml").read_text(encoding="utf-8") == cli.BUILTIN_PATCH_YML
-
-
-def test_an_incomplete_profile_is_not_composed(cli, dsh_home, tmp_path):
-    """An existing directory is not enough: dsh would create its missing profile files."""
-    profile = dsh_home / "profiles" / "web"
-    profile.mkdir(parents=True)
-    marker = tmp_path / "called"
-    bin_dir = tmp_path / "bin"
-    _write_stub_dsh(bin_dir, DUMP, marker=marker)
-    before = sorted(path.relative_to(profile) for path in profile.rglob("*"))
-
-    result = run_cli(
-        ["--dsh-dir", str(dsh_home), "--yes", "--json", "--lang", "en"],
-        env_extra={"PATH": str(bin_dir)},
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert not marker.exists()
-    after = sorted(path.relative_to(profile) for path in profile.rglob("*"))
-    assert after == before
-    assert not any(
-        (profile / name).exists()
-        for name in cli.PROFILE_REQUIRED_FILES
-    )
-    warnings = json.loads(result.stdout)["warnings"]
-    assert any("profile is incomplete" in warning for warning in warnings)
-
-
-def test_the_forbidden_profile_creation_is_the_reason_for_the_guard(cli, dsh_home):
-    """Pins the reason, not just the behaviour: dsh does create a missing profile."""
-    assert not (dsh_home / "profiles" / cli.DUMP_PROFILE).exists()
-    body, warnings = cli._render_patch_body(dsh_home)
-    assert body == cli.BUILTIN_PATCH_YML.encode("utf-8")
-    assert warnings == []
+    assert "id: dsh-keysmith" in profile_patch
+    assert "personaPrefix" not in profile_patch
