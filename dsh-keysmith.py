@@ -3,8 +3,8 @@
 # Preview-first installer for the DeepSeek Harness Cordis plugin.
 # Runtime effect lives in plugin/ (assemble guard, identity strip, contract
 # pin, lookup, dock). This CLI installs that package into one DSH profile
-# (default: web). It does not dump AGENTS.md or rewrite @deepseek-ai
-# node_modules.
+# (default: desktop when DSH Desktop's profile exists, else web). It does not
+# dump AGENTS.md or rewrite @deepseek-ai node_modules.
 #
 # Zero runtime dependencies: standard library only.
 # License: MIT. See LICENSE.
@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 # ─── Version ──────────────────────────────────────────────────────────────────
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 VERSION = __version__
 
 # ─── Names and constants ─────────────────────────────────────────────────────
@@ -35,6 +35,12 @@ PLUGIN_RELDIR = "plugin"
 MANIFEST_FILENAME = ".dsh-keysmith-manifest.json"
 MANIFEST_SCHEMA_VERSION = 1
 DEFAULT_PROFILE = "web"
+# DSH Desktop (Electron) boots only `profiles/desktop`; `dsh web` boots `profiles/web`.
+DESKTOP_PROFILE = "desktop"
+PROFILE_AUTO = "auto"
+PROFILE_SOURCE_AUTO = "auto"
+PROFILE_SOURCE_EXPLICIT = "explicit"
+PROFILE_SOURCE_MANIFEST = "manifest"
 DSH_ENV_VAR = "DSH_HOME"
 JSON_SCHEMA = "dsh-keysmith/v1"
 
@@ -145,6 +151,18 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "zh-CN": "profile 不存在: {path}",
         "en": "profile does not exist: {path}",
     },
+    "profile_auto_desktop": {
+        "zh-CN": "自动选择 desktop：找到了 DSH 桌面版的 profile。用 dsh web 的话请加 --profile web。",
+        "en": "Auto-selected desktop: found the DSH Desktop profile. Pass --profile web for dsh web.",
+    },
+    "desktop_restart": {
+        "zh-CN": "DSH 桌面版关窗口只是隐藏：从托盘（Windows）或菜单退出（macOS ⌘Q）完全退出，再打开才生效。",
+        "en": "Closing the DSH Desktop window only hides it: quit from the tray (Windows) or the app menu (macOS Cmd+Q), then reopen.",
+    },
+    "profile_moved": {
+        "zh-CN": "部署从 profiles/{old} 移到 profiles/{new}：旧 profile 里的插件、bundles 条目和 insert 会撤掉。",
+        "en": "Moving the deployment from profiles/{old} to profiles/{new}: the plugin, bundles entry and insert leave the old profile.",
+    },
     "error_plugin_src": {
         "zh-CN": "插件源不存在: {path}",
         "en": "plugin source missing: {path}",
@@ -194,6 +212,50 @@ def _manifest_path(home: Path) -> Path:
 
 def _plugin_dest(profile_dir: Path) -> Path:
     return profile_dir / "node_modules" / PLUGIN_NAME
+
+
+def _manifest_profile_source(manifest: Dict[str, Any]) -> str:
+    """How the deployed profile was chosen. 0.4.0 manifests do not say; web was
+    its only default, so any other name there was typed with --profile."""
+    source = manifest.get("profile_source")
+    if source in (PROFILE_SOURCE_AUTO, PROFILE_SOURCE_EXPLICIT):
+        return str(source)
+    profile = manifest.get("profile") or DEFAULT_PROFILE
+    return PROFILE_SOURCE_AUTO if profile == DEFAULT_PROFILE else PROFILE_SOURCE_EXPLICIT
+
+
+def _resolve_profile(
+    home: Path, requested: Optional[str], manifest: Optional[Dict[str, Any]]
+) -> Tuple[str, str]:
+    """The profile a command targets, and why: (name, source).
+
+    1. `--profile NAME` (anything but `auto`) wins.
+    2. A deployment that was made with an explicit `--profile` keeps it.
+    3. `profiles/desktop` exists: DSH Desktop owns that profile and boots
+       nothing else, so a deployment anywhere else never reaches it.
+    4. Otherwise the deployed profile, else `web`. A recorded `desktop`
+       whose directory is gone is not reused; that would rebuild a profile
+       no host reads.
+    """
+    if requested and requested != PROFILE_AUTO:
+        return requested, PROFILE_SOURCE_EXPLICIT
+    deployed = str((manifest or {}).get("profile") or "")
+    if manifest is not None and deployed and _manifest_profile_source(manifest) == PROFILE_SOURCE_EXPLICIT:
+        return deployed, PROFILE_SOURCE_MANIFEST
+    if _profile_dir(home, DESKTOP_PROFILE).is_dir():
+        return DESKTOP_PROFILE, PROFILE_SOURCE_AUTO
+    if deployed and deployed != DESKTOP_PROFILE:
+        return deployed, PROFILE_SOURCE_MANIFEST
+    return DEFAULT_PROFILE, PROFILE_SOURCE_AUTO
+
+
+def _profile_target_note(deployed: str, target: str, source: str) -> str:
+    if source == PROFILE_SOURCE_AUTO and target == DESKTOP_PROFILE:
+        return (
+            f"profile_target: deployed to profiles/{deployed}, but DSH Desktop only reads "
+            f"profiles/{DESKTOP_PROFILE}; redeploy to move it"
+        )
+    return f"profile_target: deployed to profiles/{deployed}, not profiles/{target}"
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -302,7 +364,17 @@ def strip_insert(text: str) -> str:
     result = "\n".join(out)
     if text.endswith("\n"):
         result += "\n"
-    return result
+    return restore_empty_sequence_document(result)
+
+
+def restore_empty_sequence_document(text: str) -> str:
+    """DSH refuses a profile whose `cordis.patch.yml` is not a YAML array, and
+    a comment-only file parses as null. Put back the `[]` that `ensure_insert`
+    dropped when nothing but comments is left."""
+    if any(line.strip() and not line.lstrip().startswith("#") for line in text.splitlines()):
+        return text
+    body = text.rstrip("\n")
+    return (body + "\n" if body else "") + "[]\n"
 
 
 def _read_json(path: Path) -> Optional[Dict[str, Any]]:
@@ -321,7 +393,10 @@ def _write_json(path: Path, data: Dict[str, Any]) -> None:
 
 
 def _ensure_stub_profile(profile_dir: Path) -> None:
-    """Tests (and a never-booted home) get a web-shaped stub profile."""
+    """Tests (and a never-booted home) get a web-shaped stub profile.
+
+    DSH Desktop seeds `profiles/desktop` from the same web template, so the
+    stub bundles are right for it too."""
     pkg_path = profile_dir / "package.json"
     if not pkg_path.exists():
         profile_dir.mkdir(parents=True, exist_ok=True)
@@ -377,6 +452,40 @@ def _set_bundles(pkg: Dict[str, Any], bundles: List[str]) -> Dict[str, Any]:
         profile = dsh["profile"]
     profile["bundles"] = bundles
     return pkg
+
+
+def _remove_from_profile(profile_dir: Path) -> None:
+    """Take out exactly what a deploy put into one profile: the plugin copy,
+    the bundles entry and the body insert. Everything else stays."""
+    dest = _plugin_dest(profile_dir)
+    if dest.exists():
+        shutil.rmtree(dest)
+    pkg_path = profile_dir / "package.json"
+    pkg = _read_json(pkg_path)
+    if pkg is not None:
+        bundles = _bundles_of(pkg)
+        if PLUGIN_NAME in bundles:
+            _set_bundles(pkg, [item for item in bundles if item != PLUGIN_NAME])
+            _write_json(pkg_path, pkg)
+    patch_path = profile_dir / "cordis.patch.yml"
+    if patch_path.is_file():
+        text = patch_path.read_text(encoding="utf-8")
+        stripped = strip_insert(text)
+        if stripped != text:
+            patch_path.write_text(stripped, encoding="utf-8")
+
+
+def _removal_actions(profile_dir: Path, tag: str = "") -> List[Dict[str, str]]:
+    """Planned removals for one profile, limited to the pieces that are there."""
+    copied, in_bundles, inserted = _plugin_live_state(profile_dir)
+    actions: List[Dict[str, str]] = []
+    if copied or _plugin_dest(profile_dir).exists():
+        actions.append(_json_action("delete", _plugin_dest(profile_dir), tag + RESOURCE_PLUGIN))
+    if in_bundles:
+        actions.append(_json_action("update", profile_dir / "package.json", tag + RESOURCE_BUNDLES))
+    if inserted:
+        actions.append(_json_action("update", profile_dir / "cordis.patch.yml", tag + RESOURCE_INSERT))
+    return actions
 
 
 # ─── Manifest ─────────────────────────────────────────────────────────────────
@@ -513,6 +622,7 @@ def _manifest_public(manifest: Optional[Dict[str, Any]]) -> Optional[Dict[str, A
         "tool_version": manifest.get("tool_version"),
         "created_at": manifest.get("created_at"),
         "profile": manifest.get("profile"),
+        "profile_source": _manifest_profile_source(manifest),
         "resources": resources,
         "previous_manifest": bool((manifest.get("previous_manifest") or {}).get("fingerprint")),
     }
@@ -521,9 +631,15 @@ def _manifest_public(manifest: Optional[Dict[str, Any]]) -> Optional[Dict[str, A
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
 
-def _cmd_status(home: Path, json_mode: bool, profile: str) -> int:
+def _cmd_status(home: Path, json_mode: bool, requested: Optional[str]) -> int:
     manifest = _load_manifest(home)
+    target, source = _resolve_profile(home, requested, manifest)
+    profile = str((manifest or {}).get("profile") or target)
     state, drift = _deployment_state(home, profile, manifest)
+    if manifest is not None and profile != target:
+        # The deployment is intact but sits in a profile the host does not boot.
+        drift.append(_profile_target_note(profile, target, source))
+        state = "drift"
     ready = True
     if json_mode:
         _json_dump(
@@ -535,7 +651,9 @@ def _cmd_status(home: Path, json_mode: bool, profile: str) -> int:
                 extra={
                     "dsh_dir": str(home),
                     "dsh_dir_exists": home.exists(),
-                    "profile": (manifest or {}).get("profile") or profile,
+                    "profile": profile,
+                    "target_profile": target,
+                    "profile_source": source,
                     "ready": ready,
                     "state": state,
                     "drift": drift,
@@ -548,14 +666,16 @@ def _cmd_status(home: Path, json_mode: bool, profile: str) -> int:
         return 0
     print(_tr("banner"))
     print(f"{_tr('dsh_dir')}: {home}")
-    print(f"{_tr('profile')}: {(manifest or {}).get('profile') or profile}")
+    print(f"{_tr('profile')}: {profile}")
+    for note in drift:
+        print(f"  drift: {note}")
     print(_tr("no_residue"))
     if manifest is None:
         print(f"{_tr('status_layer')}: {_tr('status_none')}")
     else:
         print(f"{_tr('status_layer')}: {manifest.get('deployment_id', '?')}")
         print(f"{_tr('status_prev')}: {bool((manifest.get('previous_manifest') or {}).get('fingerprint'))}")
-    copied, in_bundles, inserted = _plugin_live_state(_profile_dir(home, (manifest or {}).get("profile") or profile))
+    copied, in_bundles, inserted = _plugin_live_state(_profile_dir(home, profile))
     print(f"  plugin: {'yes' if copied else 'no'}  bundles: {'yes' if in_bundles else 'no'}  insert: {'yes' if inserted else 'no'}")
     print(_tr("ready") if ready else _tr("not_ready"))
     return 0
@@ -578,7 +698,7 @@ def _cmd_deploy(
     file_arg: Optional[str],
     yes: bool,
     json_mode: bool,
-    profile: str,
+    requested: Optional[str],
 ) -> int:
     mode = "execute" if yes else "preview"
     if not home.exists():
@@ -620,14 +740,37 @@ def _cmd_deploy(
             return 2
         overlay = source.read_bytes()
 
+    previous = _load_manifest(home)
+    profile, source = _resolve_profile(home, requested, previous)
+    # The manifest records how the profile was first chosen, so a later
+    # auto run keeps an explicit choice and re-checks an automatic one.
+    persisted_source = (
+        _manifest_profile_source(previous)
+        if source == PROFILE_SOURCE_MANIFEST and previous is not None
+        else source
+    )
+    old_profile = str((previous or {}).get("profile") or "")
+    moving_from = old_profile if previous is not None and old_profile and old_profile != profile else None
     profile_dir = _profile_dir(home, profile)
     dest = _plugin_dest(profile_dir)
     pkg_path = profile_dir / "package.json"
     patch_path = profile_dir / "cordis.patch.yml"
     actions = _plan_actions(profile_dir)
     warnings = [_tr("note_no_host_patch")]
+    if source == PROFILE_SOURCE_AUTO and profile == DESKTOP_PROFILE:
+        warnings.append(_tr("profile_auto_desktop"))
+    if profile == DESKTOP_PROFILE:
+        warnings.append(_tr("desktop_restart"))
+    if moving_from is not None:
+        actions.extend(_removal_actions(_profile_dir(home, moving_from), "previous_"))
+        warnings.append(_tr("profile_moved", old=moving_from, new=profile))
     if overlay is not None:
         warnings.append(_tr("file_overlay", path=file_arg))
+    profile_extra = {
+        "profile": profile,
+        "profile_source": source,
+        "previous_profile": moving_from,
+    }
 
     if not yes:
         if json_mode:
@@ -642,7 +785,7 @@ def _cmd_deploy(
                     extra={
                         "dsh_dir": str(home),
                         "dsh_dir_exists": True,
-                        "profile": profile,
+                        **profile_extra,
                         "state": "not-installed",
                         "ready": True,
                         "adapter_patch": _adapter_status_payload(),
@@ -656,11 +799,11 @@ def _cmd_deploy(
             print(_tr("plan"))
             for item in actions:
                 print(f"  {item['action']} {item['path']}")
-            print(_tr("note_no_host_patch"))
+            for note in warnings:
+                print(note)
             print(_tr("dry_run_no_write"))
         return 0
 
-    previous = _load_manifest(home)
     _ensure_stub_profile(profile_dir)
     before_pkg = _sha256_file(pkg_path)
     before_patch = _sha256_file(patch_path)
@@ -673,6 +816,10 @@ def _cmd_deploy(
         _write_json(pkg_path, pkg)
     patch_text = patch_path.read_text(encoding="utf-8") if patch_path.is_file() else ""
     patch_path.write_text(ensure_insert(patch_text), encoding="utf-8")
+    # New profile first, then the old one: an interruption leaves the old
+    # manifest, which status reports as drift and a redeploy finishes.
+    if moving_from is not None:
+        _remove_from_profile(_profile_dir(home, moving_from))
 
     deployment_id = _new_deployment_id()
     manifest = {
@@ -681,6 +828,7 @@ def _cmd_deploy(
         "deployment_id": deployment_id,
         "created_at": _utc_now(),
         "profile": profile,
+        "profile_source": persisted_source,
         RESOURCE_PLUGIN: _resource_entry(dest, None, _sha256_file(dest / "lib" / "index.js")),
         RESOURCE_BUNDLES: _resource_entry(pkg_path, before_pkg, _sha256_file(pkg_path)),
         RESOURCE_INSERT: _resource_entry(patch_path, before_patch, _sha256_file(patch_path)),
@@ -702,7 +850,7 @@ def _cmd_deploy(
                 extra={
                     "dsh_dir": str(home),
                     "dsh_dir_exists": True,
-                    "profile": profile,
+                    **profile_extra,
                     "deployment_id": deployment_id,
                     "state": "active",
                     "ready": True,
@@ -715,11 +863,13 @@ def _cmd_deploy(
         print(_tr("banner"))
         print(f"{_tr('dsh_dir')}: {home}")
         print(f"{_tr('profile')}: {profile}")
+        for note in warnings[1:]:
+            print(note)
         print(_tr("deployed"))
     return 0
 
 
-def _cmd_uninstall(home: Path, yes: bool, json_mode: bool, profile: str) -> int:
+def _cmd_uninstall(home: Path, yes: bool, json_mode: bool, requested: Optional[str]) -> int:
     mode = "execute" if yes else "preview"
     manifest = _load_manifest(home)
     if manifest is None:
@@ -739,7 +889,8 @@ def _cmd_uninstall(home: Path, yes: bool, json_mode: bool, profile: str) -> int:
         else:
             print(message)
         return 1
-    used_profile = str(manifest.get("profile") or profile)
+    # Uninstall follows the manifest: it removes the deployment that exists.
+    used_profile = str(manifest.get("profile") or _resolve_profile(home, requested, None)[0])
     profile_dir = _profile_dir(home, used_profile)
     dest = _plugin_dest(profile_dir)
     pkg_path = profile_dir / "package.json"
@@ -775,15 +926,7 @@ def _cmd_uninstall(home: Path, yes: bool, json_mode: bool, profile: str) -> int:
             print(_tr("dry_run_no_write"))
         return 0
 
-    if dest.exists():
-        shutil.rmtree(dest)
-    pkg = _read_json(pkg_path)
-    if pkg is not None:
-        bundles = [item for item in _bundles_of(pkg) if item != PLUGIN_NAME]
-        _set_bundles(pkg, bundles)
-        _write_json(pkg_path, pkg)
-    if patch_path.is_file():
-        patch_path.write_text(strip_insert(patch_path.read_text(encoding="utf-8")), encoding="utf-8")
+    _remove_from_profile(profile_dir)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     archived = _manifest_path(home).with_name(f"{MANIFEST_FILENAME}.uninstalled_{stamp}")
     shutil.move(str(_manifest_path(home)), str(archived))
@@ -904,9 +1047,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "显式选择 DSH 配置目录 (默认 ~/.dsh 或 $DSH_HOME)。",
         "Explicitly select one DSH config directory (default ~/.dsh or $DSH_HOME).",
     ))
-    parser.add_argument("--profile", metavar="NAME", default=DEFAULT_PROFILE, help=_localized(
-        "要安装的 profile，默认 web。",
-        "Profile to install into, default web.",
+    parser.add_argument("--profile", metavar="NAME", default=None, help=_localized(
+        "要安装的 profile。默认 auto：有 profiles/desktop（DSH 桌面版）就用 desktop，否则 web。",
+        "Profile to install into. Default auto: desktop when profiles/desktop (DSH Desktop) exists, else web.",
     ))
     parser.add_argument("--lang", default="auto", choices=["auto", "zh-CN", "en"], help=_localized(
         "CLI 输出语言,默认 auto。",
@@ -979,7 +1122,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         home = _default_dsh_home()
 
     json_mode = bool(getattr(args, "json", False))
-    profile = str(args.profile or DEFAULT_PROFILE)
+    profile: Optional[str] = str(args.profile).strip() if args.profile else None
     if args.status and args.yes:
         if json_mode:
             message = "status does not accept --yes"

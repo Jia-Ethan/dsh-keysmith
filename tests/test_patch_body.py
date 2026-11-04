@@ -64,3 +64,22 @@ def test_deploy_does_not_write_home_system_prompt_row(dsh_home):
     )
     assert "id: dsh-keysmith" in profile_patch
     assert "personaPrefix" not in profile_patch
+
+
+def test_strip_insert_restores_empty_sequence(cli):
+    # DSH refuses a comment-only profile patch (it parses as null, not an array).
+    fresh = "# Your patch layer for this dsh profile\n[]\n"
+    installed = cli.ensure_insert(fresh)
+    assert "[]" not in installed
+    assert cli.strip_insert(installed) == fresh
+    kept = "# mine\n- id: their-row\n  config: {}\n"
+    assert cli.strip_insert(cli.ensure_insert(kept)).rstrip("\n") == kept.rstrip("\n")
+    assert "[]" not in cli.strip_insert(cli.ensure_insert(kept))
+    assert cli.strip_insert("") == "[]\n"
+
+
+def test_uninstall_leaves_a_loadable_profile_patch(dsh_home):
+    assert run_cli(["--dsh-dir", str(dsh_home), "--yes", "--lang", "en"]).returncode == 0
+    assert run_cli(["--dsh-dir", str(dsh_home), "--uninstall", "--yes", "--lang", "en"]).returncode == 0
+    text = (dsh_home / "profiles" / "web" / "cordis.patch.yml").read_text(encoding="utf-8")
+    assert _non_comment_lines(text) == ["[]"]
