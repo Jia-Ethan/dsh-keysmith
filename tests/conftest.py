@@ -52,3 +52,31 @@ def run_cli(args, cwd=None, env_extra=None):
 
 def profile_dir(home: Path, name: str = "web") -> Path:
     return home / "profiles" / name
+
+
+def desktop_profile(home: Path) -> Path:
+    """What DSH Desktop leaves after its first launch: the web template under
+    `profiles/desktop` (apps/desktop `createPluginProfile`)."""
+    import json
+
+    profile = home / "profiles" / "desktop"
+    profile.mkdir(parents=True, exist_ok=True)
+    (profile / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "dsh-profile-desktop",
+                "private": True,
+                "dependencies": {},
+                "dsh": {"profile": {"bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"]}},
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (profile / "cordis.patch.yml").write_text(
+        "# Your patch layer for this dsh profile, applied after every bundle layer:\n[]\n",
+        encoding="utf-8",
+    )
+    (profile / "pnpm-workspace.yaml").write_text("packages:\n  - .\n", encoding="utf-8")
+    return profile

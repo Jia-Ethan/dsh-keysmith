@@ -19,7 +19,8 @@
   `cordis.patch.yml`, or `@deepseek-ai` packages.
 - A live `~/.dsh` that already holds a Switch pack `AGENTS.md` is a valid
   install target for the **profile plugin** only. Never dump over that
-  `AGENTS.md`. Isolated `web` first; live `profiles/web` only when the
+  `AGENTS.md`. Isolated home first; live `profiles/web` or
+  `profiles/desktop` only when the
   operator asks.
 - Do not patch host `node_modules`. Do not auto-restart DSH.
 - Project agent rules live in `CLAUDE.md` (red lines + command cheat sheet).

@@ -145,7 +145,16 @@ function stripKeysmithInsert(text) {
     out.push(line);
     i += 1;
   }
-  return out.join("\n").replace(/\n{3,}/g, "\n\n");
+  return restoreEmptySequenceDocument(out.join("\n").replace(/\n{3,}/g, "\n\n"));
+}
+
+// DSH refuses a profile cordis.patch.yml that is not a YAML array; a
+// comment-only file parses as null. Put back the `[]` the insert replaced.
+export function restoreEmptySequenceDocument(text) {
+  const body = String(text || "");
+  if (body.split(/\r?\n/).some((line) => line.trim() && !line.trim().startsWith("#"))) return body;
+  const head = body.replace(/\n+$/, "");
+  return `${head ? `${head}\n` : ""}[]\n`;
 }
 
 export function uninstallFromProfile(profileDir) {

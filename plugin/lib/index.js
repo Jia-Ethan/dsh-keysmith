@@ -23,9 +23,9 @@ function loadContract() {
 function pluginVersion() {
   try {
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-    return String(pkg.version || "0.4.0");
+    return String(pkg.version || "0.4.1");
   } catch {
-    return "0.4.0";
+    return "0.4.1";
   }
 }
 

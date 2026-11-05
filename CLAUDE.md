@@ -13,7 +13,10 @@ will go wrong if it dumps `AGENTS.md` or patches `@deepseek-ai`.
   `plugin/lib/contract.md` is allowed.
 - Default prompt is the engineering contract + lookup table + `[P]`,
   not 小码酱 / `[Y]`.
-- Isolated `web` first. Live `profiles/web` only when asked.
+- Isolated home first. Live `profiles/web` or `profiles/desktop` only when asked.
+- DSH Desktop boots only `profiles/desktop`; `dsh web` boots `profiles/web`.
+  No `--profile` = auto (`desktop` if that directory exists, else `web`).
+  The Electron app owns `profiles/desktop`; auto never creates it.
 - Fully quit and reopen the host after a live install.
 
 ## Layout
@@ -25,7 +28,7 @@ will go wrong if it dumps `AGENTS.md` or patches `@deepseek-ai`.
 | `plugin/lib/lookup.js` | lookup route (`LOOKUP_PLUGIN_JS` must match) |
 | `plugin/client.js` | web dock `Keysmith 已激活` |
 | `plugin/scripts/ensure-profile-bundle.mjs` | bundles + body insert |
-| `dsh-keysmith.py` | copies `plugin/` into one profile (default `web`) |
+| `dsh-keysmith.py` | copies `plugin/` into one profile (auto: `desktop` if present, else `web`) |
 
 ## Commands
 

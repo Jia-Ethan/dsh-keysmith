@@ -1,6 +1,6 @@
 {
   "name": "dsh-keysmith",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "DeepSeek Harness delivery plugin: assemble-time identity strip, system-level contract, lookup route, dock badge.",
   "license": "MIT",
   "type": "module",
@@ -36,7 +36,7 @@
   "dsh": {
     "id": "dsh-keysmith",
     "name": "DSH Keysmith",
-    "version": "0.4.0",
+    "version": "0.4.1",
     "permissions": "系统提示词注入, 客户端状态条",
     "bundle": {
       "patch": "./cordis.patch.yml"

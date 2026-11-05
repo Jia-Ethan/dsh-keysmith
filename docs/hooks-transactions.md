@@ -1,6 +1,6 @@
 # Hooks and Transactions
 
-0.4.0 installs a Cordis plugin into one DSH profile. There is no home-level
+0.4.x installs a Cordis plugin into one DSH profile. There is no home-level
 `AGENTS.md` dump and no transaction journal. `--recover` is a documented
 no-op.
 
@@ -19,7 +19,7 @@ directory that already exists. Live `$DSH_HOME/AGENTS.md` and the home
 
 ## Install ordering
 
-1. Resolve `$DSH_HOME` and `profiles/<name>/` (default `web`). A never-booted
+1. Resolve `$DSH_HOME` and the target profile (see *Profile selection*). A never-booted
    home gets a stub `package.json` / `cordis.patch.yml` / `cordis.yml`.
 2. Copy `plugin/` onto `profiles/<name>/node_modules/dsh-keysmith/`.
    `--file PATH` overlays `lib/contract.md` after the copy.
@@ -27,6 +27,27 @@ directory that already exists. Live `$DSH_HOME/AGENTS.md` and the home
 4. Append a body insert (`- insert: / - id: dsh-keysmith`) if missing.
 5. Publish `.dsh-keysmith-manifest.json` with `profile_plugin`,
    `profile_bundles`, `profile_insert`, and the previous manifest fingerprint.
+
+6. Moving profiles only: remove the plugin copy, bundles entry and insert
+   from the profile the previous manifest names. This runs after the new
+   profile is written, so an interruption leaves an old manifest that status
+   reports as `drift` and a redeploy finishes.
+
+## Profile selection
+
+DSH Desktop (Electron) boots only `profiles/desktop` and the `dsh` CLI
+refuses that name. `dsh web` boots `profiles/web`. Without `--profile` (or
+with `--profile auto`) the target is, in order:
+
+1. the manifest's profile when it was chosen with an explicit `--profile`;
+2. `desktop` when `profiles/desktop` exists;
+3. the manifest's profile (unless it is a `desktop` that no longer exists);
+4. `web`.
+
+The manifest's `profile_source` says `auto` or `explicit`. A 0.4.0 manifest
+has none: `web` counts as `auto`, any other name as `explicit`. Status
+reports `drift` with a `profile_target:` note when the deployment is not in
+the target profile. `--uninstall` always uses the manifest's profile.
 
 `dsh plugin --profile web add <plugin-dir>` is the same package via pnpm.
 `plugin/scripts/ensure-profile-bundle.mjs` writes bundles + insert; Hub
@@ -59,10 +80,11 @@ directory to reconcile.
 ```json
 {
   "schema_version": 1,
-  "tool_version": "0.4.0",
+  "tool_version": "0.4.1",
   "deployment_id": "<timestamp-pid>",
   "created_at": "<ISO-8601 Z>",
-  "profile": "web",
+  "profile": "desktop",
+  "profile_source": "auto",
   "profile_plugin":  {"path": "…/node_modules/dsh-keysmith", "before": fp|null, "after": fp, "backup": null},
   "profile_bundles": {"path": "…/package.json", "before": fp|null, "after": fp, "backup": null},
   "profile_insert":  {"path": "…/cordis.patch.yml", "before": fp|null, "after": fp, "backup": null},

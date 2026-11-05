@@ -13,13 +13,18 @@ Do not open a public issue for security reports.
 
 ## Scope
 
-`dsh-keysmith` 0.4.0 installs a Cordis plugin into **one profile** under the
+`dsh-keysmith` 0.4.x installs a Cordis plugin into **one profile** under the
 DeepSeek Harness home (`profiles/<name>/node_modules/dsh-keysmith`, that
 profile's `package.json` bundles list, and that profile's `cordis.patch.yml`
 insert), plus a home-level ownership manifest. It does not write `AGENTS.md`,
 does not rewrite the home `cordis.patch.yml`, and does not patch
 `@deepseek-ai` packages. It does not intercept network traffic or store
 credentials.
+
+Without `--profile`, the target is `profiles/desktop` when DSH Desktop has
+created it, else `profiles/web`. A redeploy into a different profile first
+installs there, then removes only the plugin copy, bundles entry and insert
+from the profile the manifest names.
 
 Installing the plugin changes **behavior for new sessions of that profile**.
 It is not a per-project switch. Fully quit and reopen the host after install.

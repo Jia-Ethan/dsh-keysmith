@@ -29,7 +29,7 @@ def test_deploy_creates_plugin_and_manifest(dsh_home):
     assert "id: dsh-keysmith" in patch
     assert (dsh_home / "AGENTS.md").exists() is False
     assert (dsh_home / "cordis.patch.yml").exists() is False
-    assert manifest["tool_version"] == "0.4.0"
+    assert manifest["tool_version"] == "0.4.1"
     assert manifest["profile"] == "web"
     assert manifest["profile_plugin"]["after"]["sha256"]
 

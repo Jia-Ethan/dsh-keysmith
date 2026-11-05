@@ -62,7 +62,22 @@ function testInstallUninstall() {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+function testUninstallLeavesAYamlArray() {
+  // A fresh profile: comments + `[]`. Install drops `[]`; uninstall must put it back
+  // or DSH refuses the profile ("must be a top-level YAML array").
+  const dir = tmpProfile();
+  const patchPath = path.join(dir, "cordis.patch.yml");
+  fs.writeFileSync(patchPath, mod.ensureKeysmithInsert("# Your patch layer\n[]\n"));
+  assert.equal(fs.readFileSync(patchPath, "utf8").includes("[]"), false);
+  mod.uninstallFromProfile(dir);
+  assert.equal(fs.readFileSync(patchPath, "utf8"), "# Your patch layer\n[]\n");
+  assert.equal(mod.restoreEmptySequenceDocument("- id: x\n"), "- id: x\n");
+  assert.equal(mod.restoreEmptySequenceDocument(""), "[]\n");
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 testEnsureDropsEmptyArray();
 testDetectInsert();
 testInstallUninstall();
-console.log("ensure-bundle: 3 tests OK");
+testUninstallLeavesAYamlArray();
+console.log("ensure-bundle: 4 tests OK");

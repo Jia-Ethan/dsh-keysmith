@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] — 2026-11-04
+
+### Fixed
+
+- DSH Desktop never loaded the plugin
+  ([keysmith-switch#162](https://github.com/Jia-Ethan/keysmith-switch/issues/162)).
+  The Electron app boots only `profiles/desktop`, and 0.4.0 always wrote
+  `profiles/web` unless `--profile` was passed, which Keysmith Switch does
+  not do. Without `--profile` (or with `--profile auto`) the CLI now picks
+  `desktop` when `profiles/desktop` exists, else `web`.
+- Removing the plugin from a fresh profile left a comment-only
+  `cordis.patch.yml`, which DSH refuses ("must be a top-level YAML array").
+  `--uninstall`, a profile move, and the postinstall `--uninstall` now put
+  back the `[]` the insert replaced.
+
+### Changed
+
+- The manifest records `profile_source` (`auto` / `explicit`). An explicit
+  `--profile NAME` sticks for later runs without the flag. A 0.4.0 manifest
+  with `web` counts as automatic; any other 0.4.0 profile counts as
+  explicit, so the issue's `--profile desktop` workaround is kept.
+- `--status` reports `drift` with a `profile_target:` note when the
+  deployment sits outside the profile it would now target, and adds
+  `target_profile` / `profile_source` to the JSON envelope.
+- A redeploy into a different profile moves the deployment: it installs
+  into the new profile, then removes the plugin copy, bundles entry and
+  insert from the old one. The preview lists those removals as
+  `previous_profile_*` actions, and the envelope names `previous_profile`.
+  Nothing else in the old profile changes.
+- A recorded `desktop` whose directory is gone is not recreated.
+- `--uninstall` still follows the manifest's profile.
+
 ## [0.4.0] — 2026-10-25
 
 ### Added
